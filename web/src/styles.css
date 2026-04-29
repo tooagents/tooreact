@@ -227,6 +227,11 @@ button:hover {
   justify-content: space-between;
 }
 
+.section-head-wide {
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
 h2,
 h3,
 h4 {
@@ -248,6 +253,59 @@ h3 {
   margin: 0;
   color: var(--muted);
   font-size: 0.95rem;
+}
+
+.kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  min-width: min(420px, 100%);
+}
+
+.kpi {
+  background: #fff9f1;
+  border: 1px solid #efd7bc;
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+
+.kpi span {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #7a6244;
+}
+
+.kpi strong {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1.02rem;
+}
+
+.split-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.zone {
+  margin: 0;
+}
+
+.nested-card {
+  background: #fff8ef;
+  border-color: #f3dcc2;
+}
+
+.report-filter-bar {
+  background: #fff8ef;
+  border: 1px solid #efdac2;
+  border-radius: var(--radius-md);
+  padding: 10px;
+}
+
+.report-card h4 {
+  margin-bottom: 8px;
 }
 
 .table-wrap {
@@ -362,6 +420,14 @@ tbody tr:hover {
 
   .hero-stats {
     grid-template-columns: 1fr;
+  }
+
+  .split-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .kpi-strip {
+    min-width: 100%;
   }
 
   .row {

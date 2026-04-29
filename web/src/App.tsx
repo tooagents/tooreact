@@ -120,8 +120,18 @@ function Inbox({ ctx, setMsg }: { ctx: ApiContext; setMsg: (v: string) => void }
 
   return (
     <section className="section-stack">
-      <div className="section-head">
+      <div className="section-head section-head-wide">
         <h2>Inbox</h2>
+        <div className="kpi-strip">
+          <div className="kpi">
+            <span>Accounts</span>
+            <strong>{accounts.length}</strong>
+          </div>
+          <div className="kpi">
+            <span>Transactions</span>
+            <strong>{transactions.length}</strong>
+          </div>
+        </div>
       </div>
       <div className="row actions">
         <button className="primary" onClick={applyCoa}>Apply Generic COA</button>
@@ -129,7 +139,6 @@ function Inbox({ ctx, setMsg }: { ctx: ApiContext; setMsg: (v: string) => void }
           Refresh
         </button>
       </div>
-      <p className="meta">Accounts: {accounts.length}</p>
       <div className="row">
         <input type="file" accept=".csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
         <button className="primary" onClick={upload} disabled={!file}>
@@ -237,37 +246,55 @@ function Entries({ ctx, setMsg }: { ctx: ApiContext; setMsg: (v: string) => void
 
   return (
     <section className="section-stack">
-      <h2>Entries</h2>
+      <div className="section-head section-head-wide">
+        <h2>Entries</h2>
+        <div className="kpi-strip">
+          <div className="kpi">
+            <span>Need Draft</span>
+            <strong>{transactions.length}</strong>
+          </div>
+          <div className="kpi">
+            <span>Draft Queue</span>
+            <strong>{drafts.length}</strong>
+          </div>
+        </div>
+      </div>
       <button className="ghost" onClick={refresh} disabled={autoGenerating}>
         {autoGenerating ? "Auto-generating..." : "Refresh"}
       </button>
-      <h3>Transactions Needing Draft</h3>
-      <ul className="plain-list">
-        {transactions.map((t) => (
-          <li key={t.id}>
-            {t.txn_date} | {t.description} | {formatMoney(t.amount)}
-            {draftErrors[t.id] ? <div className="error-text">Reason: {draftErrors[t.id]}</div> : null}
-          </li>
-        ))}
-      </ul>
-      <h3>Drafts</h3>
-      <div className="draft-list">
-        {drafts.map((d) => (
-          <div className="card" key={d.id}>
-            <div>
-              <b>{d.memo || "No memo"}</b> | confidence {Number(d.confidence).toFixed(2)}
-            </div>
-            <div>{d.rationale}</div>
-            <ul className="plain-list">
-              {d.lines.map((line: any) => (
-                <li key={line.id}>
-                  {line.line_type} | {formatMoney(line.amount)} | {line.account_id}
-                </li>
-              ))}
-            </ul>
-            <button className="primary" onClick={() => post(d.id)}>Post</button>
+      <div className="split-grid">
+        <div className="card zone">
+          <h3>Transactions Needing Draft</h3>
+          <ul className="plain-list">
+            {transactions.map((t) => (
+              <li key={t.id}>
+                {t.txn_date} | {t.description} | {formatMoney(t.amount)}
+                {draftErrors[t.id] ? <div className="error-text">Reason: {draftErrors[t.id]}</div> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="card zone">
+          <h3>Drafts</h3>
+          <div className="draft-list">
+            {drafts.map((d) => (
+              <div className="card nested-card" key={d.id}>
+                <div>
+                  <b>{d.memo || "No memo"}</b> | confidence {Number(d.confidence).toFixed(2)}
+                </div>
+                <div>{d.rationale}</div>
+                <ul className="plain-list">
+                  {d.lines.map((line: any) => (
+                    <li key={line.id}>
+                      {line.line_type} | {formatMoney(line.amount)} | {line.account_id}
+                    </li>
+                  ))}
+                </ul>
+                <button className="primary" onClick={() => post(d.id)}>Post</button>
+              </div>
+            ))}
           </div>
-        ))}
+        </div>
       </div>
     </section>
   );
@@ -285,7 +312,15 @@ function Ledger({ ctx, setMsg }: { ctx: ApiContext; setMsg: (v: string) => void 
   };
   return (
     <section className="section-stack">
-      <h2>General Ledger</h2>
+      <div className="section-head section-head-wide">
+        <h2>General Ledger</h2>
+        <div className="kpi-strip">
+          <div className="kpi">
+            <span>Rows</span>
+            <strong>{rows.length}</strong>
+          </div>
+        </div>
+      </div>
       <button className="ghost" onClick={load}>Refresh</button>
       <div className="table-wrap">
         <table>
@@ -360,8 +395,20 @@ function Reports({ ctx, setMsg }: { ctx: ApiContext; setMsg: (v: string) => void
 
   return (
     <section className="section-stack">
-      <h2>Reports</h2>
-      <div className="row">
+      <div className="section-head section-head-wide">
+        <h2>Reports</h2>
+        <div className="kpi-strip">
+          <div className="kpi">
+            <span>Trial Balance</span>
+            <strong>{tb.length}</strong>
+          </div>
+          <div className="kpi">
+            <span>As Of</span>
+            <strong>{toDate}</strong>
+          </div>
+        </div>
+      </div>
+      <div className="row report-filter-bar">
         <input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="YYYYMM" />
         <input value={fromDate} onChange={(e) => setFromDate(e.target.value)} type="date" />
         <input value={toDate} onChange={(e) => setToDate(e.target.value)} type="date" />
@@ -410,9 +457,9 @@ function Reports({ ctx, setMsg }: { ctx: ApiContext; setMsg: (v: string) => void
 
 function ReportBlock({ title, rows }: { title: string; rows: any[] }) {
   return (
-    <div className="card">
+    <div className="card report-card">
       <h4>{title}</h4>
-      <ul>
+      <ul className="plain-list">
         {rows.map((r) => (
           <li key={r.account_id}>
             {r.code} {r.name} | {formatMoney(r.amount)}

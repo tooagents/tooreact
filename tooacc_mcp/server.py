@@ -1,3 +1,4 @@
+# uv run python -m tooacc_mcp.server
 import os
 from typing import Any
 
