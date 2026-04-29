@@ -27,14 +27,15 @@ export default function App() {
   return (
     <div className="app">
       <header className="top">
-        <div>
+        <div className="brand">
+          <span className="eyebrow">Finance OS</span>
           <h1>TooAcc</h1>
           <p>AI-first accounting for teams of one</p>
         </div>
-        <div className="settings">
+        <div className="settings card">
           <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="API base URL" />
           <input value={ownerId} onChange={(e) => setOwnerId(e.target.value)} placeholder="Owner UUID (optional in dev)" />
-          <button onClick={saveSettings}>Save</button>
+          <button className="primary" onClick={saveSettings}>Save</button>
         </div>
       </header>
       <nav className="tabs">
@@ -97,41 +98,45 @@ function Inbox({ ctx, setMsg }: { ctx: ApiContext; setMsg: (v: string) => void }
   };
 
   return (
-    <section>
-      <h2>Inbox</h2>
-      <div className="row">
-        <button onClick={applyCoa}>Apply Generic COA</button>
-        <button onClick={refresh} disabled={loading}>
+    <section className="section-stack">
+      <div className="section-head">
+        <h2>Inbox</h2>
+      </div>
+      <div className="row actions">
+        <button className="primary" onClick={applyCoa}>Apply Generic COA</button>
+        <button className="ghost" onClick={refresh} disabled={loading}>
           Refresh
         </button>
       </div>
-      <p>Accounts: {accounts.length}</p>
+      <p className="meta">Accounts: {accounts.length}</p>
       <div className="row">
         <input type="file" accept=".csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-        <button onClick={upload} disabled={!file}>
+        <button className="primary" onClick={upload} disabled={!file}>
           Upload CSV
         </button>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Description</th>
-            <th>Amount</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {transactions.map((t) => (
-            <tr key={t.id}>
-              <td>{t.txn_date}</td>
-              <td>{t.description}</td>
-              <td>{formatMoney(t.amount)}</td>
-              <td>{t.status}</td>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Description</th>
+              <th>Amount</th>
+              <th>Status</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {transactions.map((t) => (
+              <tr key={t.id}>
+                <td>{t.txn_date}</td>
+                <td>{t.description}</td>
+                <td>{formatMoney(t.amount)}</td>
+                <td>{t.status}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -210,13 +215,13 @@ function Entries({ ctx, setMsg }: { ctx: ApiContext; setMsg: (v: string) => void
   };
 
   return (
-    <section>
+    <section className="section-stack">
       <h2>Entries</h2>
-      <button onClick={refresh} disabled={autoGenerating}>
+      <button className="ghost" onClick={refresh} disabled={autoGenerating}>
         {autoGenerating ? "Auto-generating..." : "Refresh"}
       </button>
       <h3>Transactions Needing Draft</h3>
-      <ul>
+      <ul className="plain-list">
         {transactions.map((t) => (
           <li key={t.id}>
             {t.txn_date} | {t.description} | {formatMoney(t.amount)}
@@ -225,21 +230,21 @@ function Entries({ ctx, setMsg }: { ctx: ApiContext; setMsg: (v: string) => void
         ))}
       </ul>
       <h3>Drafts</h3>
-      <div>
+      <div className="draft-list">
         {drafts.map((d) => (
           <div className="card" key={d.id}>
             <div>
               <b>{d.memo || "No memo"}</b> | confidence {Number(d.confidence).toFixed(2)}
             </div>
             <div>{d.rationale}</div>
-            <ul>
+            <ul className="plain-list">
               {d.lines.map((line: any) => (
                 <li key={line.id}>
                   {line.line_type} | {formatMoney(line.amount)} | {line.account_id}
                 </li>
               ))}
             </ul>
-            <button onClick={() => post(d.id)}>Post</button>
+            <button className="primary" onClick={() => post(d.id)}>Post</button>
           </div>
         ))}
       </div>
@@ -258,33 +263,35 @@ function Ledger({ ctx, setMsg }: { ctx: ApiContext; setMsg: (v: string) => void 
     }
   };
   return (
-    <section>
+    <section className="section-stack">
       <h2>General Ledger</h2>
-      <button onClick={load}>Refresh</button>
-      <table>
-        <thead>
-          <tr>
-            <th>Date</th>
-            <th>Account</th>
-            <th>Type</th>
-            <th>Amount</th>
-            <th>Running</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, idx) => (
-            <tr key={idx}>
-              <td>{r.entry_date}</td>
-              <td>
-                {r.code} {r.name}
-              </td>
-              <td>{r.line_type}</td>
-              <td>{formatMoney(r.amount)}</td>
-              <td>{formatMoney(r.running_balance)}</td>
+      <button className="ghost" onClick={load}>Refresh</button>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Account</th>
+              <th>Type</th>
+              <th>Amount</th>
+              <th>Running</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((r, idx) => (
+              <tr key={idx}>
+                <td>{r.entry_date}</td>
+                <td>
+                  {r.code} {r.name}
+                </td>
+                <td>{r.line_type}</td>
+                <td>{formatMoney(r.amount)}</td>
+                <td>{formatMoney(r.running_balance)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 }
@@ -331,36 +338,38 @@ function Reports({ ctx, setMsg }: { ctx: ApiContext; setMsg: (v: string) => void
   };
 
   return (
-    <section>
+    <section className="section-stack">
       <h2>Reports</h2>
       <div className="row">
         <input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="YYYYMM" />
         <input value={fromDate} onChange={(e) => setFromDate(e.target.value)} type="date" />
         <input value={toDate} onChange={(e) => setToDate(e.target.value)} type="date" />
-        <button onClick={load}>Load</button>
-        <button onClick={exportZip}>Export Tax Package</button>
+        <button className="ghost" onClick={load}>Load</button>
+        <button className="primary" onClick={exportZip}>Export Tax Package</button>
       </div>
       <h3>Trial Balance</h3>
-      <table>
-        <thead>
-          <tr>
-            <th>Code</th>
-            <th>Name</th>
-            <th>Debit</th>
-            <th>Credit</th>
-          </tr>
-        </thead>
-        <tbody>
-          {tb.map((r) => (
-            <tr key={r.account_id}>
-              <td>{r.code}</td>
-              <td>{r.name}</td>
-              <td>{formatMoney(r.debit)}</td>
-              <td>{formatMoney(r.credit)}</td>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Code</th>
+              <th>Name</th>
+              <th>Debit</th>
+              <th>Credit</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {tb.map((r) => (
+              <tr key={r.account_id}>
+                <td>{r.code}</td>
+                <td>{r.name}</td>
+                <td>{formatMoney(r.debit)}</td>
+                <td>{formatMoney(r.credit)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       {bs && (
         <div className="row-grid">
           <ReportBlock title="Assets" rows={bs.assets} />
@@ -413,12 +422,12 @@ function ClosePeriod({ ctx, setMsg }: { ctx: ApiContext; setMsg: (v: string) => 
     }
   };
   return (
-    <section>
+    <section className="section-stack">
       <h2>Close Period</h2>
       <div className="row">
         <input value={period} onChange={(e) => setPeriod(e.target.value)} placeholder="YYYYMM" />
-        <button onClick={close}>Close</button>
-        <button onClick={reopen}>Reopen</button>
+        <button className="primary" onClick={close}>Close</button>
+        <button className="ghost" onClick={reopen}>Reopen</button>
       </div>
     </section>
   );
