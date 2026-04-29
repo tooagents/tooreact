@@ -45,15 +45,47 @@ body {
 }
 
 .top {
-  display: flex;
-  gap: 24px;
-  align-items: flex-start;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1.35fr 1fr;
+  gap: 20px;
+  align-items: stretch;
+  padding: 20px;
   margin-bottom: 22px;
+}
+
+.brand-block {
+  display: grid;
+  gap: 18px;
 }
 
 .brand {
   max-width: 620px;
+}
+
+.hero-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.stat {
+  background: #fff7ed;
+  border: 1px solid #f2d0a8;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+}
+
+.stat span {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #7b5f3f;
+  display: block;
+}
+
+.stat strong {
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 1.1rem;
 }
 
 .eyebrow {
@@ -84,22 +116,15 @@ p {
 
 .settings {
   display: grid;
-  grid-template-columns: minmax(240px, 1fr);
+  grid-template-columns: 1fr;
+  align-content: start;
   gap: 10px;
-  flex-wrap: wrap;
-  min-width: min(440px, 100%);
+  min-width: 0;
 }
 
 .tabs {
-  display: flex;
-  gap: 10px;
-  margin: 0 0 16px;
-  padding: 10px;
-  border-radius: var(--radius-lg);
-  background: rgba(255, 250, 243, 0.74);
-  border: 1px solid #f1dac0;
-  backdrop-filter: blur(6px);
-  overflow-x: auto;
+  display: grid;
+  gap: 8px;
 }
 
 .tabs button.active {
@@ -116,6 +141,27 @@ p {
   box-shadow: var(--shadow-soft);
   padding: 24px;
   backdrop-filter: blur(6px);
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.rail {
+  position: sticky;
+  top: 14px;
+  padding: 12px;
+}
+
+.rail-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.11em;
+  color: #7b5f3f;
+  margin: 2px 0 10px;
 }
 
 .notice {
@@ -142,6 +188,7 @@ button {
   cursor: pointer;
   color: var(--text);
   font-weight: 600;
+  text-align: left;
 }
 
 button:focus-visible,
@@ -157,7 +204,7 @@ button:hover {
 
 .row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, max-content));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 8px;
   align-items: center;
   margin-bottom: 12px;
@@ -281,24 +328,44 @@ tbody tr:hover {
   }
 
   .top {
-    flex-direction: column-reverse;
+    grid-template-columns: 1fr;
     gap: 14px;
+    padding: 14px;
   }
 
   .settings {
-    min-width: 100%;
+    width: 100%;
   }
 
   .panel {
     padding: 16px;
   }
 
-  .row {
+  .workspace {
     grid-template-columns: 1fr;
   }
 
+  .rail {
+    position: static;
+    padding: 10px;
+  }
+
   .tabs {
-    border-radius: var(--radius-md);
+    display: flex;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .tabs button {
+    white-space: nowrap;
+  }
+
+  .hero-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .row {
+    grid-template-columns: 1fr;
   }
 
   button,

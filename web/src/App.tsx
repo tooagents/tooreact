@@ -26,32 +26,53 @@ export default function App() {
 
   return (
     <div className="app">
-      <header className="top">
-        <div className="brand">
-          <span className="eyebrow">AI Agent Workspace</span>
-          <h1>TooAcc</h1>
-          <p>Autonomous bookkeeping with operator-grade control.</p>
+      <header className="top card">
+        <div className="brand-block">
+          <div className="brand">
+            <span className="eyebrow">AI Agent Workspace</span>
+            <h1>TooAcc</h1>
+            <p>Autonomous bookkeeping with operator-grade control.</p>
+          </div>
+          <div className="hero-stats">
+            <div className="stat">
+              <span>Mode</span>
+              <strong>Operator</strong>
+            </div>
+            <div className="stat">
+              <span>Flow</span>
+              <strong>5-step</strong>
+            </div>
+            <div className="stat">
+              <span>State</span>
+              <strong>Live</strong>
+            </div>
+          </div>
         </div>
-        <div className="settings card">
+        <div className="settings">
           <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="API base URL" />
           <input value={ownerId} onChange={(e) => setOwnerId(e.target.value)} placeholder="Owner UUID (optional in dev)" />
           <button className="primary" onClick={saveSettings}>Save</button>
         </div>
       </header>
-      <nav className="tabs">
-        {(["inbox", "entries", "ledger", "reports", "close"] as Tab[]).map((name) => (
-          <button key={name} className={tab === name ? "active" : ""} onClick={() => setTab(name)}>
-            {name}
-          </button>
-        ))}
-      </nav>
       {msg && <div className="notice">{msg}</div>}
-      <main className="panel">
-        {tab === "inbox" && <Inbox ctx={ctx} setMsg={setMsg} />}
-        {tab === "entries" && <Entries ctx={ctx} setMsg={setMsg} />}
-        {tab === "ledger" && <Ledger ctx={ctx} setMsg={setMsg} />}
-        {tab === "reports" && <Reports ctx={ctx} setMsg={setMsg} />}
-        {tab === "close" && <ClosePeriod ctx={ctx} setMsg={setMsg} />}
+      <main className="workspace">
+        <aside className="rail card">
+          <div className="rail-label">Workflows</div>
+          <nav className="tabs">
+            {(["inbox", "entries", "ledger", "reports", "close"] as Tab[]).map((name) => (
+              <button key={name} className={tab === name ? "active" : ""} onClick={() => setTab(name)}>
+                {name}
+              </button>
+            ))}
+          </nav>
+        </aside>
+        <section className="panel">
+          {tab === "inbox" && <Inbox ctx={ctx} setMsg={setMsg} />}
+          {tab === "entries" && <Entries ctx={ctx} setMsg={setMsg} />}
+          {tab === "ledger" && <Ledger ctx={ctx} setMsg={setMsg} />}
+          {tab === "reports" && <Reports ctx={ctx} setMsg={setMsg} />}
+          {tab === "close" && <ClosePeriod ctx={ctx} setMsg={setMsg} />}
+        </section>
       </main>
     </div>
   );
