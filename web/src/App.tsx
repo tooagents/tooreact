@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { api, ApiContext } from "./api";
 
@@ -139,26 +139,65 @@ function Inbox({ ctx, setMsg }: { ctx: ApiContext; setMsg: (v: string) => void }
 function Entries({ ctx, setMsg }: { ctx: ApiContext; setMsg: (v: string) => void }) {
   const [transactions, setTransactions] = useState<any[]>([]);
   const [drafts, setDrafts] = useState<any[]>([]);
+  const [autoGenerating, setAutoGenerating] = useState(false);
+  const [draftErrors, setDraftErrors] = useState<Record<string, string>>({});
 
   const refresh = async () => {
     try {
+      let accounts = await api.listAccounts(ctx);
+      if (accounts.length === 0) {
+        await api.applyGenericCoa(ctx);
+        accounts = await api.listAccounts(ctx);
+        setMsg("No accounts found. Applied generic COA automatically.");
+      }
+
       const [tx, dr] = await Promise.all([api.listTransactions(ctx), api.listDrafts(ctx)]);
-      setTransactions(tx.filter((t) => t.status !== "posted"));
+      const activeTx = tx.filter((t) => t.status !== "posted");
+      const draftedTxIds = new Set(dr.map((d) => d.transaction_id).filter(Boolean));
+      const missingDraftTx = activeTx.filter((t) => !draftedTxIds.has(t.id));
+      setTransactions(missingDraftTx);
       setDrafts(dr);
+      const toGenerate = missingDraftTx;
+      if (toGenerate.length === 0) {
+        setDraftErrors({});
+        return;
+      }
+
+      setAutoGenerating(true);
+      let success = 0;
+      let failed = 0;
+      const errors: Record<string, string> = {};
+      for (const txn of toGenerate) {
+        try {
+          await api.generateDraft(ctx, txn.id);
+          success += 1;
+        } catch (e: any) {
+          // Keep going so one failed transaction does not block the rest.
+          failed += 1;
+          errors[txn.id] = e?.message || "Draft generation failed";
+        }
+      }
+      const [tx2, dr2] = await Promise.all([api.listTransactions(ctx), api.listDrafts(ctx)]);
+      const draftedTxIds2 = new Set(dr2.map((d) => d.transaction_id).filter(Boolean));
+      setTransactions(tx2.filter((t) => t.status !== "posted" && !draftedTxIds2.has(t.id)));
+      setDrafts(dr2);
+      setDraftErrors(errors);
+      if (failed > 0) {
+        setMsg(`Auto-generated ${success} draft(s), ${failed} failed.`);
+      } else {
+        setMsg(`Auto-generated ${success} draft(s).`);
+      }
     } catch (e: any) {
       setMsg(e.message);
+    } finally {
+      setAutoGenerating(false);
     }
   };
 
-  const generate = async (id: string) => {
-    try {
-      await api.generateDraft(ctx, id);
-      setMsg("Draft generated.");
-      await refresh();
-    } catch (e: any) {
-      setMsg(e.message);
-    }
-  };
+  useEffect(() => {
+    refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.baseUrl, ctx.ownerId]);
 
   const post = async (draftId: string) => {
     try {
@@ -173,13 +212,15 @@ function Entries({ ctx, setMsg }: { ctx: ApiContext; setMsg: (v: string) => void
   return (
     <section>
       <h2>Entries</h2>
-      <button onClick={refresh}>Refresh</button>
+      <button onClick={refresh} disabled={autoGenerating}>
+        {autoGenerating ? "Auto-generating..." : "Refresh"}
+      </button>
       <h3>Transactions Needing Draft</h3>
       <ul>
         {transactions.map((t) => (
           <li key={t.id}>
-            {t.txn_date} | {t.description} | {formatMoney(t.amount)}{" "}
-            <button onClick={() => generate(t.id)}>Generate Draft</button>
+            {t.txn_date} | {t.description} | {formatMoney(t.amount)}
+            {draftErrors[t.id] ? <div className="error-text">Reason: {draftErrors[t.id]}</div> : null}
           </li>
         ))}
       </ul>

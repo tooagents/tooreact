@@ -8,6 +8,9 @@ async function request<T>(
   path: string,
   init: RequestInit = {}
 ): Promise<T> {
+  const controller = new AbortController();
+  const timeoutMs = 15000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const headers = new Headers(init.headers);
   if (!headers.has("Content-Type") && init.body && !(init.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");
@@ -16,16 +19,25 @@ async function request<T>(
     headers.set("X-Owner-Id", ctx.ownerId);
   }
 
-  const res = await fetch(`${ctx.baseUrl}${path}`, { ...init, headers });
-  if (!res.ok) {
-    const detail = await res.text();
-    throw new Error(`${res.status} ${detail}`);
+  try {
+    const res = await fetch(`${ctx.baseUrl}${path}`, { ...init, headers, signal: controller.signal });
+    if (!res.ok) {
+      const detail = await res.text();
+      throw new Error(`${res.status} ${detail}`);
+    }
+    const contentType = res.headers.get("Content-Type") || "";
+    if (contentType.includes("application/json")) {
+      return (await res.json()) as T;
+    }
+    return (await res.blob()) as T;
+  } catch (e: any) {
+    if (e?.name === "AbortError") {
+      throw new Error("Request timed out. Please check backend/OpenAI settings.");
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeout);
   }
-  const contentType = res.headers.get("Content-Type") || "";
-  if (contentType.includes("application/json")) {
-    return (await res.json()) as T;
-  }
-  return (await res.blob()) as T;
 }
 
 export const api = {

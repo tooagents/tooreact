@@ -1,3 +1,10 @@
+uv run alembic upgrade head
+uv run fastapi dev main.py
+
+
+
+
+
 # tooacc
 
 AI-first accounting platform for teams of one.

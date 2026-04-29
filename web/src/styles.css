@@ -123,6 +123,12 @@ td {
   background: #fffefb;
 }
 
+.error-text {
+  color: #b63f00;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
 @media (max-width: 740px) {
   .top {
     flex-direction: column;

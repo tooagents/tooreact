@@ -24,7 +24,7 @@ def _fallback_draft(amount: Decimal, description: str) -> dict[str, Any]:
 
 def generate_je_draft(*, amount: Decimal, description: str, accounts: list[dict[str, str]]) -> dict[str, Any]:
     api_key = __import__("os").environ.get("OPENAI_API_KEY")
-    if not api_key:
+    if not settings.openai_enabled or not api_key:
         return _fallback_draft(amount, description)
 
     prompt = {
@@ -43,7 +43,7 @@ def generate_je_draft(*, amount: Decimal, description: str, accounts: list[dict[
     }
 
     try:
-        client = OpenAI(api_key=api_key)
+        client = OpenAI(api_key=api_key, timeout=settings.openai_timeout_sec)
         resp = client.responses.create(
             model=settings.openai_model_default,
             input=[{"role": "user", "content": [{"type": "input_text", "text": json.dumps(prompt)}]}],
@@ -55,4 +55,3 @@ def generate_je_draft(*, amount: Decimal, description: str, accounts: list[dict[
         return parsed
     except Exception:
         return _fallback_draft(amount, description)
-

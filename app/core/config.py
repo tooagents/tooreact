@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     supabase_jwt_issuer: str = ""
     supabase_jwt_audience: str = "authenticated"
     openai_model_default: str = "gpt-5.4-mini"
+    openai_enabled: bool = True
+    openai_timeout_sec: float = 12.0
     default_currency: str = "CAD"
     default_tax_jurisdiction: str = "CA"
     main_color: str = "#F28500"
