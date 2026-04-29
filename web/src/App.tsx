@@ -28,9 +28,9 @@ export default function App() {
     <div className="app">
       <header className="top">
         <div className="brand">
-          <span className="eyebrow">Finance OS</span>
+          <span className="eyebrow">AI Agent Workspace</span>
           <h1>TooAcc</h1>
-          <p>AI-first accounting for teams of one</p>
+          <p>Autonomous bookkeeping with operator-grade control.</p>
         </div>
         <div className="settings card">
           <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="API base URL" />
