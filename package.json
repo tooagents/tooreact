@@ -1,9 +1,9 @@
 {
-    "name": "t4too",
+    "name": "tooreact",
     "private": true,
     "workspaces": [
         "web_t4",
-        "web_inv",
+        "web_acc",
         "shared/*"
     ],
     "dependencies": {
