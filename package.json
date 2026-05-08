@@ -1,0 +1,12 @@
+{
+    "name": "t4too",
+    "private": true,
+    "workspaces": [
+        "web_t4",
+        "web_inv",
+        "shared/*"
+    ],
+    "dependencies": {
+        "requests": "^0.3.0"
+    }
+}

@@ -1,11 +1,12 @@
 {
     "files.exclude": {
         "**/__pycache__": true,
-	"**/__*__": true,
+		"**/__*__": true,
         ".venv": true,
         "v12": true,
         ".vscode": true,
         "**/node_modules": true,
+	"**/.wrangler": true,
         ".angular": true,
         "e2e": true,
         "LICENSE": true,

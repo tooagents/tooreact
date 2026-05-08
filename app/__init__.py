@@ -1,2 +1,0 @@
-"""TooAcc application package."""
-
