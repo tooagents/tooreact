@@ -23,6 +23,8 @@ type ImportCsvResponse = {
     duplicate_count: number;
 };
 
+type AgentChatResponse = Record<string, unknown>;
+
 async function parseApiResponse<T>(response: Response, message: string): Promise<T> {
     if (!response.ok) {
         const details = await response.text().catch(() => '');
@@ -60,5 +62,14 @@ export const inboxAPI = {
         });
 
         return parseApiResponse<ImportCsvResponse>(response, 'Failed to import CSV');
+    },
+
+    async addToInbox(message: string): Promise<AgentChatResponse> {
+        const response = await apiFetch('/too/agent/chat', {
+            method: 'POST',
+            body: JSON.stringify({ message }),
+        });
+
+        return parseApiResponse<AgentChatResponse>(response, 'Failed to add inbox message');
     },
 };
