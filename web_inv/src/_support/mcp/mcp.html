@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MCP Flow Demo</title>
+</head>
+
+<body>
+    <main>
+        <h1>Tiny MCP Flow Demo 1</h1>
+        <p>Use the small forms below to test each step separately.</p>
+
+        <div class="section">
+            <h3>Step 1: Agent Health</h3>
+            <form id="health-form">
+                <button type="submit">GET /health</button>
+            </form>
+        </div>
+
+        <div class="section">
+            <h3>Step 2: MCP Diagnostics</h3>
+            <form id="diagnose-form">
+                <button type="submit">GET /diagnose_mcp</button>
+            </form>
+        </div>
+
+        <div class="section">
+            <h3>Step 3: Direct MCP Tool Run</h3>
+            <form id="run-tool-form">
+                <input id="tool" value="tool1" />
+                <input id="args" value='{"message":"hello from test"}' />
+                <button type="submit">POST /run_tool</button>
+            </form>
+        </div>
+
+        <div class="section">
+            <h3>Step 4: Chat Flow</h3>
+            <form id="chat-form">
+                <input id="msg" placeholder="Ask something..." value="vendor: acme supplies" />
+                <button type="submit">POST /chat</button>
+            </form>
+        </div>
+
+        <pre id="out">Waiting...</pre>
+    </main>
+
+    <script>
+        const healthForm = document.getElementById('health-form');
+        const diagnoseForm = document.getElementById('diagnose-form');
+        const runToolForm = document.getElementById('run-tool-form');
+        const chatForm = document.getElementById('chat-form');
+        const input = document.getElementById('msg');
+        const toolInput = document.getElementById('tool');
+        const argsInput = document.getElementById('args');
+        const out = document.getElementById('out');
+
+        function render(title, data) {
+            const stamp = new Date().toISOString();
+            const entry = `[${stamp}] ${title}\n${JSON.stringify(data, null, 2)}\n\n`;
+            out.textContent = entry;
+        }
+
+        async function callApi(title, url, options = {}) {
+            render(title, { status: 'Running...' });
+            try {
+                const response = await fetch(url, options);
+                const rawText = await response.text();
+                let data;
+                try {
+                    data = rawText ? JSON.parse(rawText) : {};
+                } catch {
+                    data = { raw: rawText };
+                }
+                render(`${title} (HTTP ${response.status})`, data);
+            } catch (error) {
+                render(`${title} (fetch error)`, { error: String(error) });
+            }
+        }
+
+        healthForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            await callApi('Step 1: GET /health', '/health');
+        });
+
+        diagnoseForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            await callApi('Step 2: GET /diagnose_mcp', '/diagnose_mcp');
+        });
+
+        runToolForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            let parsedArgs;
+            try {
+                parsedArgs = JSON.parse(argsInput.value);
+            } catch (error) {
+                render('Step 3: invalid JSON in arguments', { error: String(error) });
+                return;
+            }
+            await callApi('Step 3: POST /run_tool', '/run_tool', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tool: toolInput.value, arguments: parsedArgs })
+            });
+        });
+
+        chatForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            await callApi('Step 4: POST /chat', '/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: input.value })
+            });
+        });
+    </script>
+</body>
+
+</html>

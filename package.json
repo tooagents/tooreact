@@ -4,6 +4,7 @@
     "workspaces": [
         "web_t4",
         "web_acc",
+        "web_inv",
         "shared/*"
     ],
     "dependencies": {
