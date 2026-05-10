@@ -8,6 +8,7 @@
         "shared/*"
     ],
     "dependencies": {
+        "@clerk/react": "^6.6.2",
         "requests": "^0.3.0"
     }
 }
