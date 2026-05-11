@@ -27,6 +27,13 @@ export const mcpAPI = {
         return parseApiResponse(response);
     },
 
+    async ztest(): Promise<MCPApiResult> {
+        const response = await apiFetch('/too/ztest');
+        return parseApiResponse(response);
+    },
+
+
+
 
     async runTool(tool: string, args: unknown): Promise<MCPApiResult> {
         const response = await apiFetch('/too/mcp/core_run_tool', {

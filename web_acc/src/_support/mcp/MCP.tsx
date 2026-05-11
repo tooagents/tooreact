@@ -31,6 +31,10 @@ const MCP = () => {
         await callApi('Step 1: GET /health', () => mcpAPI.health());
     };
 
+    const onZTest = async (e: FormEvent) => {
+        e.preventDefault();
+        await callApi('Step 2: GET /ztest', () => mcpAPI.ztest());
+    };
 
     const onRunTool = async (e: FormEvent) => {
         e.preventDefault();
@@ -62,6 +66,12 @@ const MCP = () => {
                     </form>
                 </CardBox>
 
+                <CardBox className="p-5 border-ld">
+                    <h3 className="text-base font-semibold text-sidebar-foreground">Step 2: Agent Health</h3>
+                    <form onSubmit={onZTest} className="mt-4">
+                        <Button type="submit">GET /ztest</Button>
+                    </form>
+                </CardBox>
 
                 <CardBox className="p-5 border-ld">
                     <h3 className="text-base font-semibold text-sidebar-foreground">Step 3: Direct MCP Tool Run</h3>
