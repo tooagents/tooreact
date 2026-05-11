@@ -65,7 +65,7 @@ export const inboxAPI = {
     },
 
     async addToInbox(message: string): Promise<AgentChatResponse> {
-        const response = await apiFetch('/too/agent/chat', {
+        const response = await apiFetch('/too/proxy/chat', {
             method: 'POST',
             body: JSON.stringify({ message }),
         });
