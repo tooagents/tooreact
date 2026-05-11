@@ -25,6 +25,30 @@ type ImportCsvResponse = {
 
 type AgentChatResponse = Record<string, unknown>;
 
+type AgentChatPayload = {
+    tool_choice: 'tool_transaction2je';
+    arguments: {
+        message: string;
+    };
+};
+
+function getVendorName(message: string): string {
+    return message
+        .trim()
+        .replace(/^(check\s+vendor|vendor)\s*:?\s*/i, '')
+        .trim()
+        .toLowerCase();
+}
+
+function buildAgentChatPayload(message: string): AgentChatPayload {
+    return {
+        tool_choice: 'tool_transaction2je',
+        arguments: {
+            "message": message,
+        },
+    };
+}
+
 async function parseApiResponse<T>(response: Response, message: string): Promise<T> {
     if (!response.ok) {
         const details = await response.text().catch(() => '');
@@ -67,7 +91,7 @@ export const inboxAPI = {
     async addToInbox(message: string): Promise<AgentChatResponse> {
         const response = await apiFetch('/too/proxy/chat', {
             method: 'POST',
-            body: JSON.stringify({ message }),
+            body: JSON.stringify(buildAgentChatPayload(message)),
         });
 
         return parseApiResponse<AgentChatResponse>(response, 'Failed to add inbox message');
