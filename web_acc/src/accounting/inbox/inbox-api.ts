@@ -245,7 +245,10 @@ async function parseStreamingResponse<T>(response: Response, onFlow?: FlowCallba
                 level: 'error',
                 meta: payload,
             });
-            throw new Error(payload.message || payload.body || 'Streaming error');
+            if (payload.detail && typeof payload.detail === 'object') {
+                emitTracePayload(onFlow, payload.detail);
+            }
+            throw new Error(payload.message || payload.body || payload.detail?.error || 'Streaming error');
         }
 
         emitFlow(onFlow, {
@@ -328,6 +331,28 @@ export const inboxAPI = {
             headers: { Accept: 'text/event-stream' },
             body: JSON.stringify(payload),
         });
+
+        if (response.status === 404) {
+            const details = await response.text().catch(() => '');
+            emitFlow(onFlow, {
+                source: 'tooreact',
+                step: 'stream_route_not_found_fallback_to_json',
+                meta: { details },
+            });
+            const fallbackResponse = await apiFetch('/too/proxy/chat', {
+                method: 'POST',
+                body: JSON.stringify(payload),
+            });
+            const fallbackPayload = await parseApiResponse<AgentChatResponse>(fallbackResponse, 'Failed to add inbox message');
+            emitFlow(onFlow, {
+                source: 'tooreact',
+                step: 'json_fallback_response_parsed',
+                level: 'success',
+                meta: summarizePayload(fallbackPayload),
+            });
+            emitTracePayload(onFlow, fallbackPayload);
+            return fallbackPayload;
+        }
 
         return parseStreamingResponse<AgentChatResponse>(response, onFlow);
     },
