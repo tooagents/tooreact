@@ -8,6 +8,13 @@ import { formatMoney } from 'src/core/format';
 import { AccountRow, inboxAPI, InboxFlowEvent, TxRow } from 'src/accounting/inbox/inbox-api';
 
 const MAX_FLOW_EVENTS = 120;
+const FLOW_META_PREVIEW_LIMIT = 900;
+
+function formatFlowMeta(meta: unknown): string {
+    const text = typeof meta === 'string' ? meta : JSON.stringify(meta, null, 2);
+    if (text.length <= FLOW_META_PREVIEW_LIMIT) return text;
+    return `${text.slice(0, FLOW_META_PREVIEW_LIMIT)}\n... truncated ${text.length - FLOW_META_PREVIEW_LIMIT} chars`;
+}
 
 const Inbox = () => {
     const uploadInputRef = useRef<HTMLInputElement | null>(null);
@@ -212,8 +219,8 @@ const Inbox = () => {
                         {error ? <p className="mt-3 text-sm text-red-600">Error: {error}</p> : null}
                     </div>
 
-                    <div className="h-full">
-                            <div className="h-72 overflow-hidden rounded-md border border-secondary/30 bg-background text-xs">
+                    <div className={flowEvents.length > 0 ? 'xl:col-span-2' : 'h-full'}>
+                            <div className={`${flowEvents.length > 0 ? 'h-[72vh]' : 'h-72'} overflow-hidden rounded-md border border-secondary/30 bg-background text-xs`}>
                                 <div className="flex items-center justify-between border-b border-secondary/20 px-3 py-2">
                                     <div className="flex items-center gap-2 font-medium text-foreground">
                                         <Icon icon="mdi:timeline-clock-outline" className="h-4 w-4 text-primary" />
@@ -230,7 +237,7 @@ const Inbox = () => {
                                 <div className="border-b border-secondary/20 px-3 py-2 text-muted-foreground">
                                     Draft: Date {parsedDate} | Desc {parsedDesc} | Amount {parsedAmount}
                                 </div>
-                                <div className="h-[205px] overflow-y-auto px-3 py-2">
+                                <div className={`${flowEvents.length > 0 ? 'h-[calc(72vh-76px)]' : 'h-[205px]'} overflow-y-auto px-3 py-2`}>
                                     {flowEvents.length === 0 ? (
                                         <div className="py-8 text-center text-muted-foreground">
                                             Flow events will appear here after Add to Inbox.
@@ -260,8 +267,8 @@ const Inbox = () => {
                                                         ) : null}
                                                     </div>
                                                     {event.meta !== undefined ? (
-                                                        <pre className="mt-1 max-h-20 overflow-auto whitespace-pre-wrap break-words rounded bg-background/70 p-2 text-[11px] leading-4 text-muted-foreground">
-                                                            {typeof event.meta === 'string' ? event.meta : JSON.stringify(event.meta, null, 2)}
+                                                        <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words rounded bg-background/70 p-2 text-[11px] leading-4 text-muted-foreground">
+                                                            {formatFlowMeta(event.meta)}
                                                         </pre>
                                                     ) : null}
                                                 </div>
