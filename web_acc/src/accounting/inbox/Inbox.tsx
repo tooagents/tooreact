@@ -5,7 +5,9 @@ import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/tab
 import LoadingSpinner from 'src/components/shared/LoadingSpinner';
 import { Icon } from '@iconify/react/dist/iconify.js';
 import { formatMoney } from 'src/core/format';
-import { AccountRow, inboxAPI, TxRow } from 'src/accounting/inbox/inbox-api';
+import { AccountRow, inboxAPI, InboxFlowEvent, TxRow } from 'src/accounting/inbox/inbox-api';
+
+const MAX_FLOW_EVENTS = 120;
 
 const Inbox = () => {
     const uploadInputRef = useRef<HTMLInputElement | null>(null);
@@ -15,6 +17,7 @@ const Inbox = () => {
     const [loading, setLoading] = useState(false);
     const [msg, setMsg] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [flowEvents, setFlowEvents] = useState<InboxFlowEvent[]>([]);
     const [transactionNote, setTransactionNote] = useState('');
     const [firstLineDraft, setFirstLineDraft] = useState({
         txn_date: '',
@@ -23,9 +26,30 @@ const Inbox = () => {
         status: '',
     });
 
-    const refresh = async () => {
+    const recordFlow = (event: InboxFlowEvent) => {
+        const id = event.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        setFlowEvents((prev) => [{ ...event, id }, ...prev].slice(0, MAX_FLOW_EVENTS));
+    };
+
+    const recordLocalFlow = (
+        step: string,
+        meta?: unknown,
+        level: InboxFlowEvent['level'] = 'info',
+        source = 'tooreact',
+    ) => {
+        recordFlow({
+            ts: new Date().toLocaleTimeString(),
+            source,
+            step,
+            level,
+            meta,
+        });
+    };
+
+    const refresh = async (flowLabel = 'manual') => {
         setLoading(true);
         setError(null);
+        recordLocalFlow('refresh_start', { flowLabel, endpoints: ['/acc/get_transactions?limit=200', '/acc/accounts'] });
         try {
             const [tx, accts] = await Promise.all([
                 inboxAPI.listTransactions(),
@@ -33,7 +57,9 @@ const Inbox = () => {
             ]);
             setTransactions(tx);
             setAccounts(accts);
+            recordLocalFlow('refresh_done', { transaction_count: tx.length, account_count: accts.length }, 'success');
         } catch (e: any) {
+            recordLocalFlow('refresh_error', { message: e?.message || String(e) }, 'error');
             setError(e?.message || 'Failed to load inbox data.');
         } finally {
             setLoading(false);
@@ -43,11 +69,14 @@ const Inbox = () => {
     const uploadCsv = async (nextFile?: File) => {
         if (!nextFile) return;
         setError(null);
+        recordLocalFlow('csv_import_start', { file_name: nextFile.name, size: nextFile.size });
         try {
             const res = await inboxAPI.importCsv(nextFile);
             setMsg(`Imported ${res.imported_count}, duplicates ${res.duplicate_count}.`);
-            await refresh();
+            recordLocalFlow('csv_import_done', res, 'success');
+            await refresh('after_csv_import');
         } catch (e: any) {
+            recordLocalFlow('csv_import_error', { message: e?.message || String(e) }, 'error');
             setError(e?.message || 'Failed to upload CSV.');
         }
     };
@@ -56,12 +85,17 @@ const Inbox = () => {
         const note = transactionNote.trim();
         if (!note) return;
         setError(null);
+        setMsg(null);
+        setFlowEvents([]);
+        recordLocalFlow('add_to_inbox_clicked', { note });
         try {
-            await inboxAPI.addToInbox(note);
+            const response = await inboxAPI.addToInbox(note, recordFlow);
+            recordLocalFlow('add_to_inbox_response_ready', response, 'success');
             setMsg(`Added to inbox: ${note}`);
             setTransactionNote('');
-            await refresh();
+            await refresh('after_add_to_inbox');
         } catch (e: any) {
+            recordLocalFlow('add_to_inbox_error', { message: e?.message || String(e) }, 'error');
             setError(e?.message || 'Failed to add transaction note.');
         }
     };
@@ -69,8 +103,9 @@ const Inbox = () => {
     const handleCameraFile = async (nextFile?: File) => {
         if (!nextFile) return;
         setError(null);
+        recordLocalFlow('camera_file_selected', { file_name: nextFile.name, size: nextFile.size });
         setMsg(`Captured image: ${nextFile.name}`);
-        await refresh();
+        await refresh('after_camera_file');
     };
 
     const parsedAmount = transactionNote.match(/(-?\d+(?:\.\d+)?)/)?.[1] || '-';
@@ -129,9 +164,9 @@ const Inbox = () => {
                             <Button
                                 className="h-9 px-5 rounded-full shadow-sm"
                                 onClick={addTypedTransaction}
-                                disabled={!transactionNote.trim()}
+                                disabled={!transactionNote.trim() || loading}
                             >
-                                <Icon icon="mdi:plus-circle-outline" className="h-4 w-4" />
+                                {loading ? <LoadingSpinner size="sm" variant="dots" /> : <Icon icon="mdi:plus-circle-outline" className="h-4 w-4" />}
                                 Add to Inbox
                             </Button>
 
@@ -178,9 +213,62 @@ const Inbox = () => {
                     </div>
 
                     <div className="h-full">
-                            <div className="h-full rounded-md border border-dashed border-secondary/30 bg-background px-3 py-2 text-xs text-muted-foreground">
-                                <span className="font-medium text-foreground">Preview:</span>{' '}
-                                Date: {parsedDate} | Desc: {parsedDesc} | Amount: {parsedAmount}
+                            <div className="h-72 overflow-hidden rounded-md border border-secondary/30 bg-background text-xs">
+                                <div className="flex items-center justify-between border-b border-secondary/20 px-3 py-2">
+                                    <div className="flex items-center gap-2 font-medium text-foreground">
+                                        <Icon icon="mdi:timeline-clock-outline" className="h-4 w-4 text-primary" />
+                                        Flow Stream
+                                    </div>
+                                    <button
+                                        type="button"
+                                        className="text-muted-foreground hover:text-foreground"
+                                        onClick={() => setFlowEvents([])}
+                                    >
+                                        Clear
+                                    </button>
+                                </div>
+                                <div className="border-b border-secondary/20 px-3 py-2 text-muted-foreground">
+                                    Draft: Date {parsedDate} | Desc {parsedDesc} | Amount {parsedAmount}
+                                </div>
+                                <div className="h-[205px] overflow-y-auto px-3 py-2">
+                                    {flowEvents.length === 0 ? (
+                                        <div className="py-8 text-center text-muted-foreground">
+                                            Flow events will appear here after Add to Inbox.
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            {flowEvents.map((event) => (
+                                                <div
+                                                    key={event.id}
+                                                    className="rounded-md border border-secondary/20 bg-muted/20 px-2 py-2"
+                                                >
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <span
+                                                            className={
+                                                                event.level === 'error'
+                                                                    ? 'h-2 w-2 rounded-full bg-error'
+                                                                    : event.level === 'success'
+                                                                        ? 'h-2 w-2 rounded-full bg-success'
+                                                                        : 'h-2 w-2 rounded-full bg-primary'
+                                                            }
+                                                        />
+                                                        <span className="font-medium text-foreground">{event.step}</span>
+                                                        <span className="text-muted-foreground">{event.source}</span>
+                                                        <span className="ml-auto text-muted-foreground">{event.ts}</span>
+                                                        {typeof event.elapsedMs === 'number' ? (
+                                                            <span className="text-muted-foreground">{event.elapsedMs}ms</span>
+                                                        ) : null}
+                                                    </div>
+                                                    {event.meta !== undefined ? (
+                                                        <pre className="mt-1 max-h-20 overflow-auto whitespace-pre-wrap break-words rounded bg-background/70 p-2 text-[11px] leading-4 text-muted-foreground">
+                                                            {typeof event.meta === 'string' ? event.meta : JSON.stringify(event.meta, null, 2)}
+                                                        </pre>
+                                                    ) : null}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                     </div>
                 </div>
