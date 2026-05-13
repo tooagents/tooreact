@@ -10,14 +10,37 @@ type StreamItem = {
     event: string;
     title: string;
     detail?: string;
+    pending?: boolean;
+    injectionText?: string;
 };
 
 const pageSize = 20;
 
-const getInjectedWord = (value: string) => {
-    const hasCompletedWord = /\S+\s/.test(value);
-    if (!hasCompletedWord) return '';
-    return value.trimStart().split(/\s+/)[0] || '';
+const getInjectionItems = (value: string): StreamItem[] => {
+    if (value.trim().length === 0) return [];
+
+    const injectedTokens: string[] = [];
+    const matches = [...value.matchAll(/\S+/g)];
+
+    matches.forEach((match) => {
+        const token = match[0];
+        const endIndex = (match.index ?? 0) + token.length;
+        const isComplete = endIndex < value.length && /\s/.test(value.charAt(endIndex));
+        const hasNumber = /\d/.test(token);
+
+        if (isComplete || hasNumber) {
+            injectedTokens.push(token);
+        }
+    });
+
+    return [
+        {
+            event: 'ai_injection_waiting',
+            title: 'AI Injection',
+            injectionText: injectedTokens.join(' '),
+            pending: true,
+        },
+    ];
 };
 
 const Inbox = () => {
@@ -51,17 +74,14 @@ const Inbox = () => {
         }
     };
 
-    const injectedWord = useMemo(() => getInjectedWord(transactionNote), [transactionNote]);
-    const previewItems = useMemo(() => {
-        if (!injectedWord) return streamItems;
+    const injectionItems = useMemo(() => getInjectionItems(transactionNote), [transactionNote]);
+    const previewItems = useMemo<StreamItem[]>(() => {
+        if (injectionItems.length === 0) return streamItems;
         return [
-            {
-                event: 'ai_injecting',
-                title: `AI Injecting: ${injectedWord}`,
-            },
+            ...injectionItems,
             ...streamItems,
         ];
-    }, [injectedWord, streamItems]);
+    }, [injectionItems, streamItems]);
 
     const formatStreamStatus = (value: string) =>
         value
@@ -97,17 +117,14 @@ const Inbox = () => {
     const formatStreamItem = (status: string, meta: Record<string, unknown>): StreamItem | null => {
         if (status === 'start' || status === 'interpreting_transaction') return null;
 
-        if (status === 'validating_note') {
-            return {
-                event: status,
-                title: `Validating Note: Characters: ${String(meta.characters ?? 0)}`,
-            };
-        }
+        if (status === 'validating_note' || status === 'import_summary') return null;
 
         if (status === 'calling_ai_model') {
+            const model = typeof meta.model === 'string' ? meta.model : '';
             return {
                 event: status,
                 title: 'Calling Ai Model (ok)',
+                detail: model ? `Model: ${model}` : undefined,
             };
         }
 
@@ -130,13 +147,6 @@ const Inbox = () => {
             return {
                 event: status,
                 title: 'Saving Inbox',
-            };
-        }
-
-        if (status === 'import_summary') {
-            return {
-                event: status,
-                title: `Imported Count: ${String(meta.imported_count ?? 0)} | Duplicate Count: ${String(meta.duplicate_count ?? 0)}`,
             };
         }
 
@@ -186,10 +196,12 @@ const Inbox = () => {
                     if (typeof response.confidence_score === 'number') {
                         setStreamConfidence(response.confidence_score);
                     }
+                    const confidence = typeof response.confidence_score === 'number'
+                        ? `Confidence: ${Math.round(response.confidence_score * 100)}%`
+                        : undefined;
                     setStreamItems((prev) => [
                         ...prev,
-                        { event, title: 'Done' },
-                        { event: 'inbox_updated', title: 'Inbox updated.' },
+                        { event: 'inbox_updated', title: 'Inbox updated:', detail: confidence },
                     ]);
                     return;
                 }
@@ -321,8 +333,24 @@ const Inbox = () => {
                                             <div key={`${item.event}-${index}`} className="flex min-w-0 gap-2">
                                                 <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary/80" />
                                                 <div className="min-w-0 flex-1">
-                                                    <p className="break-words font-medium text-foreground">{item.title}</p>
-                                                    {item.detail ? <p className="mt-0.5 break-words">{item.detail}</p> : null}
+                                                    <p className="flex flex-wrap items-center gap-1.5 break-words text-foreground">
+                                                        <span className="font-medium">
+                                                            {item.title}{item.injectionText ? ':' : ''}
+                                                        </span>
+                                                        {item.injectionText ? (
+                                                            <span className="font-normal">{item.injectionText}</span>
+                                                        ) : null}
+                                                        {item.detail ? (
+                                                            <span className="font-normal text-muted-foreground">{item.detail}</span>
+                                                        ) : null}
+                                                        {item.pending ? (
+                                                            <span className="flex items-center gap-0.5 text-primary" aria-label="Waiting for typing">
+                                                                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.2s]" />
+                                                                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.1s]" />
+                                                                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
+                                                            </span>
+                                                        ) : null}
+                                                    </p>
                                                 </div>
                                             </div>
                                         ))}
