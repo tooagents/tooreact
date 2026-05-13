@@ -388,7 +388,7 @@ const Inbox = () => {
                                 <Table>
                                     <THeader>
                                         <TRow>
-                                            <THead className="min-w-3 px-2">Date</THead>
+                                            <THead className="min-w-3 px-2">Transaction Date</THead>
                                             <THead className="min-w-3 px-2">Description</THead>
                                             <THead className="min-w-3 px-2 text-right">Amount</THead>
                                             <THead className="min-w-3 px-2">Status</THead>
