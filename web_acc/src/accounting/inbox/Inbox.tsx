@@ -14,7 +14,7 @@ type StreamItem = {
     injectionText?: string;
 };
 
-const pageSize = 20;
+const pageSize = 10;
 
 const getInjectionItems = (value: string): StreamItem[] => {
     if (value.trim().length === 0) return [];
