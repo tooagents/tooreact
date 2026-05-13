@@ -1,16 +1,12 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from 'src/components/ui/card';
 import { Button } from 'src/components/ui/button';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
-import LoadingSpinner from 'src/components/shared/LoadingSpinner';
 import { Icon } from '@iconify/react/dist/iconify.js';
 import { formatMoney } from 'src/core/format';
-import { AccountRow, inboxAPI, TxRow } from 'src/accounting/inbox/inbox-api';
+import { inboxAPI, TxRow } from 'src/accounting/inbox/inbox-api';
 
 const Inbox = () => {
-    const uploadInputRef = useRef<HTMLInputElement | null>(null);
-    const cameraInputRef = useRef<HTMLInputElement | null>(null);
-    const [accounts, setAccounts] = useState<AccountRow[]>([]);
     const [transactions, setTransactions] = useState<TxRow[]>([]);
     const [loading, setLoading] = useState(false);
     const [msg, setMsg] = useState<string | null>(null);
@@ -27,28 +23,12 @@ const Inbox = () => {
         setLoading(true);
         setError(null);
         try {
-            const [tx, accts] = await Promise.all([
-                inboxAPI.listTransactions(),
-                inboxAPI.listAccounts(),
-            ]);
+            const tx = await inboxAPI.listTransactions();
             setTransactions(tx);
-            setAccounts(accts);
         } catch (e: any) {
             setError(e?.message || 'Failed to load inbox data.');
         } finally {
             setLoading(false);
-        }
-    };
-
-    const uploadCsv = async (nextFile?: File) => {
-        if (!nextFile) return;
-        setError(null);
-        try {
-            const res = await inboxAPI.importCsv(nextFile);
-            setMsg(`Imported ${res.imported_count}, duplicates ${res.duplicate_count}.`);
-            await refresh();
-        } catch (e: any) {
-            setError(e?.message || 'Failed to upload CSV.');
         }
     };
 
@@ -66,16 +46,10 @@ const Inbox = () => {
         }
     };
 
-    const handleCameraFile = async (nextFile?: File) => {
-        if (!nextFile) return;
+    const startVoiceInput = () => {
         setError(null);
-        setMsg(`Captured image: ${nextFile.name}`);
-        await refresh();
+        setMsg('Voice input coming soon.');
     };
-
-    const parsedAmount = transactionNote.match(/(-?\d+(?:\.\d+)?)/)?.[1] || '-';
-    const parsedDate = /\btoday\b/i.test(transactionNote) ? 'Today' : /\byesterday\b/i.test(transactionNote) ? 'Yesterday' : '-';
-    const parsedDesc = transactionNote.replace(/-?\d+(?:\.\d+)?/g, '').replace(/\b(today|yesterday)\b/gi, '').trim() || '-';
 
     useEffect(() => {
         refresh();
@@ -136,40 +110,13 @@ const Inbox = () => {
                             </Button>
 
                             <div className="flex flex-wrap items-center gap-2">
-                                <input
-                                    ref={uploadInputRef}
-                                    type="file"
-                                    accept=".csv"
-                                    className="hidden"
-                                    onChange={(e) => {
-                                        uploadCsv(e.target.files?.[0] || undefined);
-                                        e.target.value = '';
-                                    }}
-                                />
-                                <input
-                                    ref={cameraInputRef}
-                                    type="file"
-                                    accept="image/*"
-                                    capture="environment"
-                                    className="hidden"
-                                    onChange={(e) => handleCameraFile(e.target.files?.[0])}
-                                />
                                 <Button
                                     variant="outline"
                                     className="h-9 px-4 rounded-full"
-                                    onClick={() => uploadInputRef.current?.click()}
-                                    disabled={loading}
+                                    onClick={startVoiceInput}
                                 >
-                                    {loading ? <LoadingSpinner size="sm" variant="dots" /> : <Icon icon="material-symbols:upload-rounded" className="h-4 w-4" />}
-                                    Upload
-                                </Button>
-                                <Button
-                                    variant="outline"
-                                    className="h-9 px-4 rounded-full"
-                                    onClick={() => cameraInputRef.current?.click()}
-                                >
-                                    <Icon icon="mdi:camera-outline" className="h-4 w-4" />
-                                    Camera
+                                    <Icon icon="mdi:microphone-outline" className="h-4 w-4" />
+                                    Voice
                                 </Button>
                             </div>
                         </div>
@@ -178,10 +125,15 @@ const Inbox = () => {
                     </div>
 
                     <div className="h-full">
-                            <div className="h-full rounded-md border border-dashed border-secondary/30 bg-background px-3 py-2 text-xs text-muted-foreground">
-                                <span className="font-medium text-foreground">Preview:</span>{' '}
-                                Date: {parsedDate} | Desc: {parsedDesc} | Amount: {parsedAmount}
+                        <div className="h-full px-3 py-2 text-xs text-muted-foreground">
+                            <p className="font-medium text-foreground">AI understands natural transaction notes.</p>
+                            <p className="mt-2">Just type normally:</p>
+                            <div className="mt-1 space-y-1">
+                                <p>"paid rent"</p>
+                                <p>"coffee with sam"</p>
+                                <p>"uber after airport"</p>
                             </div>
+                        </div>
                     </div>
                 </div>
 

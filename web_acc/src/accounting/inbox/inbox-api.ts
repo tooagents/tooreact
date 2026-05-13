@@ -26,28 +26,8 @@ type ImportCsvResponse = {
 type AgentChatResponse = Record<string, unknown>;
 
 type AgentChatPayload = {
-    tool_choice: 'tool_transaction2je';
-    arguments: {
-        message: string;
-    };
+    message: string;
 };
-
-function getVendorName(message: string): string {
-    return message
-        .trim()
-        .replace(/^(check\s+vendor|vendor)\s*:?\s*/i, '')
-        .trim()
-        .toLowerCase();
-}
-
-function buildAgentChatPayload(message: string): AgentChatPayload {
-    return {
-        tool_choice: 'tool_transaction2je',
-        arguments: {
-            "message": message,
-        },
-    };
-}
 
 async function parseApiResponse<T>(response: Response, message: string): Promise<T> {
     if (!response.ok) {
@@ -61,10 +41,25 @@ async function parseApiResponse<T>(response: Response, message: string): Promise
 }
 
 export const inboxAPI = {
+    // add to inbox
+    async addToInbox(message: string): Promise<AgentChatResponse> {
+        const payload: AgentChatPayload = { message };
+        const response = await apiFetch('/acc/add2inbox', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+
+        return parseApiResponse<AgentChatResponse>(response, 'Failed to add inbox message');
+    },
+
+
     async listTransactions(): Promise<TxRow[]> {
-        const response = await apiFetch('/acc/get_transactions?limit=200');
+        const response = await apiFetch('/acc/get_transaction_list?limit=200');
         return parseApiResponse<TxRow[]>(response, 'Failed to fetch transactions');
     },
+
+
+
 
     async listAccounts(): Promise<AccountRow[]> {
         const response = await apiFetch('/acc/accounts');
@@ -76,24 +71,5 @@ export const inboxAPI = {
         return parseApiResponse<ApplyCoaResponse>(response, 'Failed to apply COA');
     },
 
-    async importCsv(file: File): Promise<ImportCsvResponse> {
-        const form = new FormData();
-        form.append('file', file);
 
-        const response = await apiFetch('/acc/transactions/import-csv', {
-            method: 'POST',
-            body: form,
-        });
-
-        return parseApiResponse<ImportCsvResponse>(response, 'Failed to import CSV');
-    },
-
-    async addToInbox(message: string): Promise<AgentChatResponse> {
-        const response = await apiFetch('/too/proxy/chat', {
-            method: 'POST',
-            body: JSON.stringify(buildAgentChatPayload(message)),
-        });
-
-        return parseApiResponse<AgentChatResponse>(response, 'Failed to add inbox message');
-    },
 };
