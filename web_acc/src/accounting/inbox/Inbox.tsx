@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from 'src/components/ui/card';
 import { Button } from 'src/components/ui/button';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
@@ -12,8 +12,17 @@ type StreamItem = {
     detail?: string;
 };
 
+const pageSize = 20;
+
+const getInjectedWord = (value: string) => {
+    const hasCompletedWord = /\S+\s/.test(value);
+    if (!hasCompletedWord) return '';
+    return value.trimStart().split(/\s+/)[0] || '';
+};
+
 const Inbox = () => {
     const [transactions, setTransactions] = useState<TxRow[]>([]);
+    const [pageIndex, setPageIndex] = useState(0);
     const [loading, setLoading] = useState(false);
     const [msg, setMsg] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -42,6 +51,18 @@ const Inbox = () => {
         }
     };
 
+    const injectedWord = useMemo(() => getInjectedWord(transactionNote), [transactionNote]);
+    const previewItems = useMemo(() => {
+        if (!injectedWord) return streamItems;
+        return [
+            {
+                event: 'ai_injecting',
+                title: `AI Injecting: ${injectedWord}`,
+            },
+            ...streamItems,
+        ];
+    }, [injectedWord, streamItems]);
+
     const formatStreamStatus = (value: string) =>
         value
             .split('_')
@@ -49,11 +70,90 @@ const Inbox = () => {
             .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
             .join(' ');
 
-    const formatStreamMeta = (meta: Record<string, unknown>) =>
-        Object.entries(meta)
-            .filter(([key]) => !['message', 'model', 'confidence_score'].includes(key))
-            .map(([key, value]) => `${formatStreamStatus(key)}: ${String(value)}`)
-            .join(' | ');
+    const formatTransactionSummary = (meta: Record<string, unknown>) => {
+        const transactions = Array.isArray(meta.transactions) ? meta.transactions : [];
+        const firstTransaction = transactions.find((row): row is Record<string, unknown> =>
+            row !== null && typeof row === 'object',
+        );
+        const confidence =
+            typeof meta.confidence_score === 'number'
+                ? `Confidence: ${Math.round(meta.confidence_score * 100)}%`
+                : '';
+
+        if (!firstTransaction) return confidence;
+
+        const description = String(firstTransaction.description || 'Transaction');
+        const txnDate = String(firstTransaction.txn_date || '-');
+        const amount = String(firstTransaction.amount || '0');
+        const currency = String(firstTransaction.currency || '');
+        return [
+            `${description}.`,
+            `Date: ${txnDate}`,
+            `Amount: ${currency ? `${currency} ` : ''}${amount}`,
+            confidence,
+        ].filter(Boolean).join(' | ');
+    };
+
+    const formatStreamItem = (status: string, meta: Record<string, unknown>): StreamItem | null => {
+        if (status === 'start' || status === 'interpreting_transaction') return null;
+
+        if (status === 'validating_note') {
+            return {
+                event: status,
+                title: `Validating Note: Characters: ${String(meta.characters ?? 0)}`,
+            };
+        }
+
+        if (status === 'calling_ai_model') {
+            return {
+                event: status,
+                title: 'Calling Ai Model (ok)',
+            };
+        }
+
+        if (status === 'understanding_transaction' || status === 'ai_interpretation_ready') {
+            return {
+                event: status,
+                title: 'Understanding Transaction',
+                detail: formatTransactionSummary(meta) || 'AI returned a standard accounting description.',
+            };
+        }
+
+        if (status === 'transactions_found') {
+            return {
+                event: status,
+                title: `Transactions Found: ${String(meta.count ?? 0)}`,
+            };
+        }
+
+        if (status === 'saving_inbox') {
+            return {
+                event: status,
+                title: 'Saving Inbox',
+            };
+        }
+
+        if (status === 'import_summary') {
+            return {
+                event: status,
+                title: `Imported Count: ${String(meta.imported_count ?? 0)} | Duplicate Count: ${String(meta.duplicate_count ?? 0)}`,
+            };
+        }
+
+        return {
+            event: status,
+            title: formatStreamStatus(status),
+        };
+    };
+
+    const handleTransactionNoteChange = (value: string) => {
+        setTransactionNote(value);
+        if (isStreaming) return;
+        setMsg(null);
+        setStreamItems([]);
+        setStreamModel(null);
+        setStreamConfidence(null);
+    };
 
     const addTypedTransaction = async () => {
         const note = transactionNote.trim();
@@ -73,14 +173,8 @@ const Inbox = () => {
                         : {};
                     if (typeof meta.model === 'string') setStreamModel(meta.model);
                     if (typeof meta.confidence_score === 'number') setStreamConfidence(meta.confidence_score);
-                    setStreamItems((prev) => [
-                        ...prev,
-                        {
-                            event,
-                            title: formatStreamStatus(status),
-                            detail: formatStreamMeta(meta),
-                        },
-                    ]);
+                    const item = formatStreamItem(status, meta);
+                    if (item) setStreamItems((prev) => [...prev, item]);
                     return;
                 }
 
@@ -92,7 +186,11 @@ const Inbox = () => {
                     if (typeof response.confidence_score === 'number') {
                         setStreamConfidence(response.confidence_score);
                     }
-                    setStreamItems((prev) => [...prev, { event, title: 'Done', detail: 'Inbox updated.' }]);
+                    setStreamItems((prev) => [
+                        ...prev,
+                        { event, title: 'Done' },
+                        { event: 'inbox_updated', title: 'Inbox updated.' },
+                    ]);
                     return;
                 }
 
@@ -116,6 +214,18 @@ const Inbox = () => {
     useEffect(() => {
         refresh();
     }, []);
+
+    useEffect(() => {
+        setPageIndex(0);
+    }, [transactions.length]);
+
+    const pageCount = Math.max(1, Math.ceil(transactions.length / pageSize));
+    const pageData = useMemo(
+        () => transactions.slice(pageIndex * pageSize, pageIndex * pageSize + pageSize),
+        [transactions, pageIndex],
+    );
+    const canPrev = pageIndex > 0;
+    const canNext = pageIndex + 1 < pageCount;
 
     useEffect(() => {
         const firstRow = transactions[0];
@@ -143,7 +253,7 @@ const Inbox = () => {
                                 <input
                                     className="h-10 w-full bg-transparent text-sm outline-none"
                                     value={transactionNote}
-                                    onChange={(e) => setTransactionNote(e.target.value)}
+                                    onChange={(e) => handleTransactionNoteChange(e.target.value)}
                                     placeholder='Type transaction (e.g. "Uber 23 yesterday")'
                                 />
                             </div>
@@ -188,7 +298,7 @@ const Inbox = () => {
 
                     <div className="h-full min-w-0 max-w-full overflow-hidden">
                         <div className="flex h-full min-h-28 w-full min-w-0 max-w-full flex-col overflow-hidden rounded-md border border-dashed border-secondary/30 bg-background px-4 py-3 text-xs text-muted-foreground shadow-sm">
-                            {streamItems.length > 0 || isStreaming ? (
+                            {previewItems.length > 0 || isStreaming ? (
                                 <div className="flex min-h-0 flex-1 flex-col gap-3">
                                     <div className="flex shrink-0 flex-wrap items-center gap-2">
                                         <span className="max-w-full rounded-full border border-secondary/20 bg-muted/40 px-2 py-1 font-medium text-foreground">
@@ -207,7 +317,7 @@ const Inbox = () => {
                                     </div>
 
                                     <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                                        {streamItems.map((item, index) => (
+                                        {previewItems.map((item, index) => (
                                             <div key={`${item.event}-${index}`} className="flex min-w-0 gap-2">
                                                 <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary/80" />
                                                 <div className="min-w-0 flex-1">
@@ -257,7 +367,7 @@ const Inbox = () => {
                                         </TRow>
                                     </THeader>
                                     <TBody>
-                                        {transactions.map((row) => (
+                                        {pageData.map((row) => (
                                             <TRow key={row.id} className="hover:bg-primary/10 transition-colors">
                                                 <TCell className="text-sm px-2 py-3">{row.txn_date || '-'}</TCell>
                                                 <TCell className="text-sm px-2 py-3">{row.description || '-'}</TCell>
@@ -267,6 +377,13 @@ const Inbox = () => {
                                                 <TCell className="text-sm px-2 py-3">{row.status || '-'}</TCell>
                                             </TRow>
                                         ))}
+                                        {loading ? (
+                                            <TRow>
+                                                <TCell className="text-sm px-2 py-4 text-muted-foreground" colSpan={4}>
+                                                    Loading inbox transactions...
+                                                </TCell>
+                                            </TRow>
+                                        ) : null}
                                         {!loading && transactions.length === 0 ? (
                                             <TRow>
                                                 <TCell className="text-sm px-2 py-4 text-muted-foreground" colSpan={4}>
@@ -277,6 +394,33 @@ const Inbox = () => {
                                     </TBody>
                                 </Table>
                             </div>
+                            {transactions.length > 0 ? (
+                                <div className="flex flex-col gap-4 p-4">
+                                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+                                        <div className="flex gap-2 w-full sm:w-auto">
+                                            <Button
+                                                onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
+                                                disabled={!canPrev}
+                                                variant="secondary"
+                                                className="flex-1 sm:flex-none text-xs sm:text-sm"
+                                            >
+                                                Previous
+                                            </Button>
+                                            <Button
+                                                onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
+                                                disabled={!canNext}
+                                                className="flex-1 sm:flex-none text-xs sm:text-sm"
+                                            >
+                                                Next
+                                            </Button>
+                                        </div>
+
+                                        <div className="text-forest-black dark:text-white/90 font-medium text-xs sm:text-base whitespace-nowrap">
+                                            Page {pageIndex + 1} of {pageCount}
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : null}
                         </CardContent>
                     </Card>
 
