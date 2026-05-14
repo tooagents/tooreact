@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from 'src/components/ui/card';
 import { Button } from 'src/components/ui/button';
 import { Input } from 'src/components/ui/input';
@@ -7,6 +7,8 @@ import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/tab
 import { Icon } from '@iconify/react/dist/iconify.js';
 import { formatMoney } from 'src/core/format';
 import { inboxAPI, TxRow } from 'src/accounting/inbox/inbox-api';
+import InboxJournalEntryPanel from 'src/accounting/inbox/InboxJournalEntryPanel';
+import { getTransactionJournalId } from 'src/accounting/inbox/inbox-journal-entry';
 
 type StreamItem = {
     event: string;
@@ -27,16 +29,15 @@ type TransactionField = keyof TransactionDraft;
 
 const pageSize = 10;
 const statusOptions = [
-    { value: 'review', label: 'Review' },
+    { value: 'new', label: 'New' },
+    { value: 'mapped', label: 'Mapped' },
+    { value: 'needs_review', label: 'Review' },
     { value: 'posted', label: 'Posted' },
-    { value: 'closed', label: 'Closed' },
-    { value: 'void', label: 'Void' },
 ];
 
 const normalizeTransactionStatus = (value: string) => {
     const normalized = value.trim().toLowerCase();
-    if (normalized === 'new') return 'posted';
-    if (normalized === 'deleted') return 'void';
+    if (normalized === 'review') return 'needs_review';
     return normalized;
 };
 
@@ -45,6 +46,53 @@ const formatTransactionStatus = (value: string) => {
     const option = statusOptions.find((status) => status.value === normalized);
     return option?.label || value || '-';
 };
+
+const transactionFields: TransactionField[] = ['txn_date', 'description', 'amount', 'status'];
+
+const areTransactionValuesEqual = (field: TransactionField, nextValue: string, currentValue: unknown) => {
+    if (field === 'amount') {
+        const nextAmount = Number(nextValue);
+        const currentAmount = Number(currentValue ?? 0);
+        return Number.isFinite(nextAmount) && Number.isFinite(currentAmount) && nextAmount === currentAmount;
+    }
+
+    if (field === 'status') {
+        return normalizeTransactionStatus(nextValue) === normalizeTransactionStatus(String(currentValue ?? ''));
+    }
+
+    return nextValue.trim() === String(currentValue ?? '').trim();
+};
+
+const toTransactionUpdateValue = (field: TransactionField, value: string) => {
+    if (field === 'amount') return Number(value) || 0;
+    if (field === 'status') return normalizeTransactionStatus(value);
+    return value.trim();
+};
+
+const getResponseTransactions = (response: Record<string, unknown>): TxRow[] => {
+    const rows = Array.isArray(response.transactions) ? response.transactions : [];
+    return rows.filter((row): row is TxRow =>
+        row !== null &&
+        typeof row === 'object' &&
+        typeof (row as TxRow).id === 'string',
+    );
+};
+
+const mergeTransactionsWithEntries = (
+    transactions: TxRow[],
+    entries: { transaction: TxRow; entry: Awaited<ReturnType<typeof inboxAPI.generateJournalEntry>> }[],
+) =>
+    transactions.map((transaction) => {
+        const generated = entries.find((item) => item.transaction.id === transaction.id);
+        return generated
+            ? {
+                ...transaction,
+                status: 'posted',
+                journal_id: generated.entry.id,
+                journal_entry: generated.entry,
+            }
+            : transaction;
+    });
 
 const getInjectionItems = (value: string): StreamItem[] => {
     if (value.trim().length === 0) return [];
@@ -100,12 +148,7 @@ const Inbox = () => {
     const [streamModel, setStreamModel] = useState<string | null>(null);
     const [streamConfidence, setStreamConfidence] = useState<number | null>(null);
     const [isStreaming, setIsStreaming] = useState(false);
-    const [firstLineDraft, setFirstLineDraft] = useState({
-        txn_date: '',
-        description: '',
-        amount: '',
-        status: '',
-    });
+    const [selectedTransactionId, setSelectedTransactionId] = useState<string | null>(null);
 
     const toTransactionDraft = (row: TxRow): TransactionDraft => ({
         txn_date: row.txn_date || '',
@@ -114,24 +157,27 @@ const Inbox = () => {
         status: row.status || '',
     });
 
-    const updateInboxTransactionPlaceholder = async (rowId: string, updates: Partial<TxRow>) => {
-        console.info('TODO: replace with backend inbox transaction update', { rowId, updates });
-        await Promise.resolve();
-    };
-
-    const deleteInboxTransactionPlaceholder = async (rowId: string) => {
-        console.info('TODO: replace with backend inbox transaction delete', { rowId });
-        await Promise.resolve();
-    };
-
-    const refresh = async () => {
+    const refresh = async (): Promise<TxRow[]> => {
         setLoading(true);
         setError(null);
         try {
             const tx = await inboxAPI.listTransactions();
-            setTransactions(tx);
+            setTransactions((prev) =>
+                tx.map((transaction) => {
+                    const existing = prev.find((row) => row.id === transaction.id);
+                    return existing?.journal_entry
+                        ? {
+                            ...transaction,
+                            journal_id: transaction.journal_id ?? existing.journal_id,
+                            journal_entry: existing.journal_entry,
+                        }
+                        : transaction;
+                }),
+            );
+            return tx;
         } catch (e: any) {
             setError(e?.message || 'Failed to load inbox data.');
+            return [];
         } finally {
             setLoading(false);
         }
@@ -238,7 +284,7 @@ const Inbox = () => {
         setStreamConfidence(null);
         setIsStreaming(true);
         try {
-            await inboxAPI.addToInboxStream(note, (event, data) => {
+            const addResponse = await inboxAPI.addToInboxStream(note, (event, data) => {
                 if (event === 'status') {
                     const status = String(data.status || 'Working');
                     const meta = data.meta && typeof data.meta === 'object'
@@ -271,19 +317,64 @@ const Inbox = () => {
 
                 setStreamItems((prev) => [...prev, { event, title: formatStreamStatus(event) }]);
             });
-            setMsg(`Added to inbox: ${note}`);
+
+            const addedTransactions = getResponseTransactions(addResponse);
+            const generatedResults = addedTransactions.length > 0
+                ? await Promise.allSettled(
+                    addedTransactions.map(async (transaction) => ({
+                        transaction,
+                        entry: await inboxAPI.generateJournalEntry(transaction.id),
+                    })),
+                )
+                : [];
+            const generatedEntries = generatedResults
+                .filter((result): result is PromiseFulfilledResult<{
+                    transaction: TxRow;
+                    entry: Awaited<ReturnType<typeof inboxAPI.generateJournalEntry>>;
+                }> => result.status === 'fulfilled')
+                .map((result) => result.value);
+            const failedGenerationCount = generatedResults.filter((result) => result.status === 'rejected').length;
+
+            if (addedTransactions.length > 0) {
+                setStreamItems((prev) => [
+                    ...prev,
+                    {
+                        event: 'journal_entries_generated',
+                        title: `Journal Entries Generated: ${generatedEntries.length}`,
+                        detail: failedGenerationCount > 0 ? `Failed: ${failedGenerationCount}` : undefined,
+                    },
+                ]);
+            }
+
+            if (generatedEntries.length > 0) {
+                setTransactions((prev) =>
+                    mergeTransactionsWithEntries(prev, generatedEntries),
+                );
+                setSelectedTransactionId(generatedEntries[0].transaction.id);
+            } else if (addedTransactions[0]?.id) {
+                setSelectedTransactionId(addedTransactions[0].id);
+            }
+
             setTransactionNote('');
-            await refresh();
+            const refreshedTransactions = await refresh();
+            if (generatedEntries.length > 0) {
+                setTransactions(mergeTransactionsWithEntries(refreshedTransactions, generatedEntries));
+            }
+            const generatedOrRecoveredCount = addedTransactions.filter((transaction) =>
+                generatedEntries.some((item) => item.transaction.id === transaction.id) ||
+                refreshedTransactions.some((row) => row.id === transaction.id && row.journal_id),
+            ).length;
+            const unresolvedGenerationCount = Math.max(0, addedTransactions.length - generatedOrRecoveredCount);
+
+            setMsg(`Added to inbox: ${note}${generatedOrRecoveredCount > 0 ? ' and generated journal entry.' : ''}`);
+            if (unresolvedGenerationCount > 0 && failedGenerationCount > 0) {
+                setError(`Added to inbox, but ${unresolvedGenerationCount} journal entr${unresolvedGenerationCount === 1 ? 'y' : 'ies'} failed to generate.`);
+            }
         } catch (e: any) {
             setError(e?.message || 'Failed to add transaction note.');
         } finally {
             setIsStreaming(false);
         }
-    };
-
-    const startVoiceInput = () => {
-        setError(null);
-        setMsg('Voice input coming soon.');
     };
 
     const startEditingTransaction = (row: TxRow) => {
@@ -305,17 +396,29 @@ const Inbox = () => {
         }));
     };
 
-    const saveTransactionDraft = async (row: TxRow, field: TransactionField, overrideValue?: string) => {
-        const draft = transactionDrafts[row.id];
-        if (!draft && overrideValue === undefined) return;
+    const mergeGeneratedEntry = useCallback((transactionId: string, entry: Awaited<ReturnType<typeof inboxAPI.generateJournalEntry>>) => {
+        setTransactions((prev) =>
+            prev.map((transaction) =>
+                transaction.id === transactionId
+                    ? {
+                        ...transaction,
+                        status: 'posted',
+                        journal_id: entry.id,
+                        journal_entry: entry,
+                    }
+                    : transaction,
+            ),
+        );
+    }, []);
 
-        const nextValue = (overrideValue ?? draft?.[field] ?? '').trim();
-        const currentValue = String(row[field] ?? '').trim();
-        if (nextValue === currentValue) return;
-
-        const updates: Partial<TxRow> = {
-            [field]: field === 'amount' ? Number(nextValue) || 0 : nextValue,
-        };
+    const saveTransactionUpdates = async (
+        row: TxRow,
+        updates: Partial<TxRow>,
+        changedFields: TransactionField[],
+    ) => {
+        const shouldRegenerateEntry = changedFields.includes('description');
+        const shouldReloadSyncedEntry = !shouldRegenerateEntry &&
+            (changedFields.includes('amount') || changedFields.includes('txn_date'));
 
         setSavingRows((prev) => ({ ...prev, [row.id]: true }));
         setTransactions((prev) =>
@@ -328,13 +431,91 @@ const Inbox = () => {
         setError(null);
 
         try {
-            await updateInboxTransactionPlaceholder(row.id, updates);
-            setMsg('Inbox transaction saved.');
+            const savedTransaction = await inboxAPI.updateTransaction(row.id, updates);
+            setTransactions((prev) =>
+                prev.map((transaction) =>
+                    transaction.id === row.id
+                        ? {
+                            ...transaction,
+                            ...savedTransaction,
+                            journal_entry: shouldRegenerateEntry || shouldReloadSyncedEntry
+                                ? undefined
+                                : transaction.journal_entry,
+                        }
+                        : transaction,
+                ),
+            );
+            try {
+                if (shouldRegenerateEntry) {
+                    const entry = await inboxAPI.generateJournalEntry(row.id, { force: true });
+                    mergeGeneratedEntry(row.id, entry);
+                    setMsg('Inbox transaction saved and journal entry regenerated.');
+                } else if (shouldReloadSyncedEntry) {
+                    const journalId = getTransactionJournalId(savedTransaction) ?? getTransactionJournalId(row);
+                    if (journalId) {
+                        const entry = await inboxAPI.getJournalEntry(journalId);
+                        mergeGeneratedEntry(row.id, entry);
+                        setMsg('Inbox transaction saved and journal entry updated.');
+                    } else {
+                        setMsg('Inbox transaction saved.');
+                    }
+                } else {
+                    setMsg('Inbox transaction saved.');
+                }
+            } catch (entryError: any) {
+                setMsg('Inbox transaction saved.');
+                setError(entryError?.message || 'Failed to update journal entry.');
+            }
+            return true;
         } catch (e: any) {
             setError(e?.message || 'Failed to save inbox transaction.');
+            setTransactions((prev) =>
+                prev.map((transaction) =>
+                    transaction.id === row.id
+                        ? row
+                        : transaction,
+                ),
+            );
+            return false;
         } finally {
             setSavingRows((prev) => ({ ...prev, [row.id]: false }));
         }
+    };
+
+    const saveTransactionDraft = async (row: TxRow, field: TransactionField, overrideValue?: string) => {
+        const draft = transactionDrafts[row.id];
+        if (!draft && overrideValue === undefined) return false;
+
+        const nextValue = (overrideValue ?? draft?.[field] ?? '').trim();
+        if (areTransactionValuesEqual(field, nextValue, row[field])) return true;
+
+        return saveTransactionUpdates(row, {
+            [field]: toTransactionUpdateValue(field, nextValue),
+        }, [field]);
+    };
+
+    const saveAllTransactionDrafts = async (row: TxRow) => {
+        const draft = transactionDrafts[row.id];
+        if (!draft) {
+            stopEditingTransaction(row.id);
+            return;
+        }
+
+        const updates: Partial<TxRow> = {};
+        const changedFields = transactionFields.filter((field) => {
+            const nextValue = (draft[field] ?? '').trim();
+            if (areTransactionValuesEqual(field, nextValue, row[field])) return false;
+            updates[field] = toTransactionUpdateValue(field, nextValue) as never;
+            return true;
+        });
+
+        if (changedFields.length === 0) {
+            stopEditingTransaction(row.id);
+            return;
+        }
+
+        const saved = await saveTransactionUpdates(row, updates, changedFields);
+        if (saved) stopEditingTransaction(row.id);
     };
 
     const stopEditingTransaction = (rowId: string) => {
@@ -354,10 +535,14 @@ const Inbox = () => {
         setEditingRows((prev) => ({ ...prev, [row.id]: false }));
 
         try {
-            await deleteInboxTransactionPlaceholder(row.id);
-            setMsg('Inbox transaction deleted.');
+            await inboxAPI.voidTransaction(row.id);
+            setMsg('Inbox transaction and journal entry voided.');
+            if (selectedTransactionId === row.id) {
+                const nextTransaction = transactions.find((transaction) => transaction.id !== row.id);
+                setSelectedTransactionId(nextTransaction?.id ?? null);
+            }
         } catch (e: any) {
-            setError(e?.message || 'Failed to delete inbox transaction.');
+            setError(e?.message || 'Failed to void inbox transaction.');
             setTransactions((prev) => [row, ...prev]);
         } finally {
             setSavingRows((prev) => ({ ...prev, [row.id]: false }));
@@ -381,19 +566,24 @@ const Inbox = () => {
     const canNext = pageIndex + 1 < pageCount;
 
     useEffect(() => {
-        const firstRow = transactions[0];
-        if (!firstRow) {
-            setFirstLineDraft({ txn_date: '', description: '', amount: '', status: '' });
+        if (transactions.length === 0) {
+            setSelectedTransactionId(null);
             return;
         }
 
-        setFirstLineDraft({
-            txn_date: firstRow.txn_date || '',
-            description: firstRow.description || '',
-            amount: String(firstRow.amount ?? ''),
-            status: firstRow.status || '',
-        });
-    }, [transactions]);
+        const selectedExists = selectedTransactionId
+            ? transactions.some((transaction) => transaction.id === selectedTransactionId)
+            : false;
+
+        if (!selectedExists) {
+            setSelectedTransactionId(transactions[0].id);
+        }
+    }, [selectedTransactionId, transactions]);
+
+    const selectedTransaction = useMemo(
+        () => transactions.find((transaction) => transaction.id === selectedTransactionId) ?? transactions[0],
+        [selectedTransactionId, transactions],
+    );
 
     return (
         <>
@@ -410,21 +600,9 @@ const Inbox = () => {
                                     placeholder='Type transaction (e.g. "Uber 23 yesterday")'
                                 />
                             </div>
-                            {/* <div className="mt-2 flex flex-wrap gap-2">
-                                {composerTokens.map((token) => (
-                                    <button
-                                        key={token}
-                                        type="button"
-                                        className="rounded-full border border-secondary/30 bg-background px-3 py-1 text-xs text-muted-foreground hover:bg-muted/60"
-                                        onClick={() => setTransactionNote((prev) => `${prev ? `${prev} ` : ''}${token}`)}
-                                    >
-                                        + {token}
-                                    </button>
-                                ))}
-                            </div> */}
                         </div>
 
-                        <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center">
                             <Button
                                 className="h-9 px-5 rounded-full shadow-sm"
                                 onClick={addTypedTransaction}
@@ -433,17 +611,6 @@ const Inbox = () => {
                                 <Icon icon="mdi:plus-circle-outline" className="h-4 w-4" />
                                 {isStreaming ? 'Adding...' : 'Add to Inbox'}
                             </Button>
-
-                            <div className="flex flex-wrap items-center gap-2">
-                                <Button
-                                    variant="outline"
-                                    className="h-9 px-4 rounded-full"
-                                    onClick={startVoiceInput}
-                                >
-                                    <Icon icon="mdi:microphone-outline" className="h-4 w-4" />
-                                    Voice
-                                </Button>
-                            </div>
                         </div>
                         {msg ? <p className="mt-3 text-sm text-muted-foreground">{msg}</p> : null}
                         {error ? <p className="mt-3 text-sm text-red-600">Error: {error}</p> : null}
@@ -539,17 +706,36 @@ const Inbox = () => {
                                     <TBody>
                                         {pageData.map((row) => {
                                             const isEditing = Boolean(editingRows[row.id]);
+                                            const isSaving = Boolean(savingRows[row.id]);
                                             const draft = transactionDrafts[row.id] ?? toTransactionDraft(row);
                                             const inputClassName = 'h-9 rounded-md px-2 text-sm';
+                                            const isSelected = row.id === selectedTransaction?.id;
 
                                             return (
-                                                <TRow key={row.id} className="hover:bg-primary/10 transition-colors">
+                                                <TRow
+                                                    key={row.id}
+                                                    role="button"
+                                                    tabIndex={0}
+                                                    aria-selected={isSelected}
+                                                    className={[
+                                                        'cursor-pointer transition-colors hover:bg-primary/10',
+                                                        isSelected ? 'bg-primary/10 shadow-[inset_3px_0_0_hsl(var(--primary))]' : '',
+                                                    ].filter(Boolean).join(' ')}
+                                                    onClick={() => setSelectedTransactionId(row.id)}
+                                                    onKeyDown={(event) => {
+                                                        if (event.key === 'Enter' || event.key === ' ') {
+                                                            event.preventDefault();
+                                                            setSelectedTransactionId(row.id);
+                                                        }
+                                                    }}
+                                                >
                                                     <TCell className="text-sm px-2 py-3">
                                                         {isEditing ? (
                                                             <Input
                                                                 type="date"
                                                                 className={inputClassName}
                                                                 value={draft.txn_date}
+                                                                disabled={isSaving}
                                                                 onChange={(e) => updateTransactionDraft(row.id, 'txn_date', e.target.value)}
                                                                 onBlur={() => saveTransactionDraft(row, 'txn_date')}
                                                             />
@@ -562,6 +748,7 @@ const Inbox = () => {
                                                             <Input
                                                                 className={inputClassName}
                                                                 value={draft.description}
+                                                                disabled={isSaving}
                                                                 onChange={(e) => updateTransactionDraft(row.id, 'description', e.target.value)}
                                                                 onBlur={() => saveTransactionDraft(row, 'description')}
                                                             />
@@ -576,6 +763,7 @@ const Inbox = () => {
                                                                 step="0.01"
                                                                 className={`${inputClassName} text-right tabular-nums`}
                                                                 value={draft.amount}
+                                                                disabled={isSaving}
                                                                 onChange={(e) => updateTransactionDraft(row.id, 'amount', e.target.value)}
                                                                 onBlur={() => saveTransactionDraft(row, 'amount')}
                                                             />
@@ -589,6 +777,7 @@ const Inbox = () => {
                                                                 value={statusOptions.some((status) => status.value === normalizeTransactionStatus(draft.status))
                                                                     ? normalizeTransactionStatus(draft.status)
                                                                     : undefined}
+                                                                disabled={isSaving}
                                                                 onValueChange={(value) => updateTransactionStatus(row, value)}
                                                             >
                                                                 <SelectTrigger className={inputClassName}>
@@ -607,19 +796,44 @@ const Inbox = () => {
                                                         )}
                                                     </TCell>
                                                     <TCell className="text-sm px-2 py-3 text-right">
-                                                        <button
-                                                            type="button"
-                                                            className="ml-auto flex h-9 w-9 items-center justify-center rounded-full hover:bg-lightprimary hover:text-primary disabled:pointer-events-none disabled:opacity-50"
-                                                            disabled={Boolean(savingRows[row.id])}
-                                                            aria-label={isEditing ? 'Done editing transaction' : 'Edit transaction'}
-                                                            onClick={() =>
-                                                                isEditing
-                                                                    ? stopEditingTransaction(row.id)
-                                                                    : startEditingTransaction(row)
-                                                            }
-                                                        >
-                                                            <Icon icon={isEditing ? 'mdi:check' : 'solar:pen-new-square-broken'} height={18} />
-                                                        </button>
+                                                        <div className="ml-auto flex justify-end gap-1">
+                                                            <button
+                                                                type="button"
+                                                                className="flex h-9 w-9 items-center justify-center rounded-full hover:bg-lightprimary hover:text-primary disabled:pointer-events-none disabled:opacity-50"
+                                                                disabled={isSaving}
+                                                                aria-label={isSaving ? 'Saving transaction' : isEditing ? 'Save transaction' : 'Edit transaction'}
+                                                                onMouseDown={(event) => {
+                                                                    if (isEditing) event.preventDefault();
+                                                                }}
+                                                                onClick={(event) => {
+                                                                    event.stopPropagation();
+                                                                    setSelectedTransactionId(row.id);
+                                                                    if (isEditing) {
+                                                                        void saveAllTransactionDrafts(row);
+                                                                        return;
+                                                                    }
+                                                                    startEditingTransaction(row);
+                                                                }}
+                                                            >
+                                                                <Icon
+                                                                    icon={isSaving ? 'mdi:loading' : isEditing ? 'mdi:check' : 'solar:pen-new-square-broken'}
+                                                                    height={18}
+                                                                    className={isSaving ? 'animate-spin' : undefined}
+                                                                />
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                className="flex h-9 w-9 items-center justify-center rounded-full hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-50"
+                                                                disabled={isSaving}
+                                                                aria-label="Void transaction"
+                                                                onClick={(event) => {
+                                                                    event.stopPropagation();
+                                                                    void deleteTransaction(row);
+                                                                }}
+                                                            >
+                                                                <Icon icon="mdi:trash-can-outline" height={18} />
+                                                            </button>
+                                                        </div>
                                                     </TCell>
                                                 </TRow>
                                             );
@@ -671,73 +885,7 @@ const Inbox = () => {
                         </CardContent>
                     </Card>
 
-                    <Card className="shadow-none border-secondary/20">
-                        <CardHeader className="p-4">
-                            <CardTitle className="text-base">First Line Edit</CardTitle>
-                        </CardHeader>
-                        <CardContent className="p-0">
-                            <div className="overflow-x-auto border-t border-ld">
-                                <Table>
-                                    <THeader>
-                                        <TRow>
-                                            <THead className="min-w-3 px-2">Date</THead>
-                                            <THead className="min-w-3 px-2">Description</THead>
-                                            <THead className="min-w-3 px-2 text-right">Amount</THead>
-                                            <THead className="min-w-3 px-2">Status</THead>
-                                        </TRow>
-                                    </THeader>
-                                    <TBody>
-                                        {transactions.length > 0 ? (
-                                            <TRow>
-                                                <TCell className="px-2 py-3">
-                                                    <input
-                                                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                                                        value={firstLineDraft.txn_date}
-                                                        onChange={(e) =>
-                                                            setFirstLineDraft((prev) => ({ ...prev, txn_date: e.target.value }))
-                                                        }
-                                                    />
-                                                </TCell>
-                                                <TCell className="px-2 py-3">
-                                                    <input
-                                                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                                                        value={firstLineDraft.description}
-                                                        onChange={(e) =>
-                                                            setFirstLineDraft((prev) => ({ ...prev, description: e.target.value }))
-                                                        }
-                                                    />
-                                                </TCell>
-                                                <TCell className="px-2 py-3">
-                                                    <input
-                                                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-right tabular-nums"
-                                                        value={firstLineDraft.amount}
-                                                        onChange={(e) =>
-                                                            setFirstLineDraft((prev) => ({ ...prev, amount: e.target.value }))
-                                                        }
-                                                    />
-                                                </TCell>
-                                                <TCell className="px-2 py-3">
-                                                    <input
-                                                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
-                                                        value={firstLineDraft.status}
-                                                        onChange={(e) =>
-                                                            setFirstLineDraft((prev) => ({ ...prev, status: e.target.value }))
-                                                        }
-                                                    />
-                                                </TCell>
-                                            </TRow>
-                                        ) : (
-                                            <TRow>
-                                                <TCell className="text-sm px-2 py-4 text-muted-foreground" colSpan={4}>
-                                                    No first line to edit.
-                                                </TCell>
-                                            </TRow>
-                                        )}
-                                    </TBody>
-                                </Table>
-                            </div>
-                        </CardContent>
-                    </Card>
+                    <InboxJournalEntryPanel transaction={selectedTransaction} onEntryResolved={mergeGeneratedEntry} />
                 </div>
 
             </div>

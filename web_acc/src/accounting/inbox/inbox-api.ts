@@ -1,4 +1,5 @@
 import { apiFetch } from 'src/core/apihttp';
+import { JournalEntryPreview, unwrapJournalEntryResponse } from 'src/accounting/inbox/inbox-journal-entry';
 
 export type AccountRow = {
     id: string;
@@ -11,6 +12,10 @@ export type TxRow = {
     description?: string;
     amount?: number | string;
     status?: string;
+    journal_id?: string | null;
+    journal_entry?: JournalEntryPreview | null;
+    is_deleted?: boolean | null;
+    [key: string]: unknown;
 };
 
 type ApplyCoaResponse = {
@@ -96,15 +101,16 @@ async function parseSseResponse<T>(response: Response, onEvent?: StreamCallback)
 
 export const inboxAPI = {
     // add to inbox
-    async addToInbox(message: string): Promise<AgentChatResponse> {
-        const payload: AgentChatPayload = { message };
-        const response = await apiFetch('/acc/add2inbox', {
-            method: 'POST',
-            body: JSON.stringify(payload),
-        });
+    // async addToInbox(message: string): Promise<AgentChatResponse> {
+    //     const payload: AgentChatPayload = { message };
+    //     const response = await apiFetch('/acc/add2inbox', {
+    //         method: 'POST',
+    //         body: JSON.stringify(payload),
+    //     });
 
-        return parseApiResponse<AgentChatResponse>(response, 'Failed to add inbox message');
-    },
+    //     return parseApiResponse<AgentChatResponse>(response, 'Failed to add inbox message');
+    // },
+
 
     async addToInboxStream(message: string, onEvent?: StreamCallback): Promise<AgentChatResponse> {
         const payload: AgentChatPayload = { message };
@@ -116,9 +122,7 @@ export const inboxAPI = {
 
         if (!response.ok) {
             const details = await response.text().catch(() => '');
-            throw new Error(
-                `Failed to add inbox message: ${response.status} ${response.statusText}${details ? ` - ${details}` : ''}`,
-            );
+            throw new Error(`Failed to add inbox message: ${response.status} ${response.statusText}${details ? ` - ${details}` : ''}`,);
         }
 
         return parseSseResponse<AgentChatResponse>(response, onEvent);
@@ -130,7 +134,35 @@ export const inboxAPI = {
         return parseApiResponse<TxRow[]>(response, 'Failed to fetch transactions');
     },
 
+    async getJournalEntry(journalId: string): Promise<JournalEntryPreview> {
+        const response = await apiFetch(`/acc/je/getone/${encodeURIComponent(journalId)}`);
+        const data = await parseApiResponse<unknown>(response, 'Failed to fetch journal entry');
+        return unwrapJournalEntryResponse(data);
+    },
 
+    async generateJournalEntry(transactionId: string, options: { force?: boolean } = {}): Promise<JournalEntryPreview> {
+        const response = await apiFetch('/acc/je/generate', {
+            method: 'POST',
+            body: JSON.stringify({ transaction_id: transactionId, force: Boolean(options.force) }),
+        });
+        const data = await parseApiResponse<unknown>(response, 'Failed to generate journal entry');
+        return unwrapJournalEntryResponse(data);
+    },
+
+    async updateTransaction(transactionId: string, updates: Partial<TxRow>): Promise<TxRow> {
+        const response = await apiFetch(`/acc/update_transaction/${encodeURIComponent(transactionId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(updates),
+        });
+        return parseApiResponse<TxRow>(response, 'Failed to update inbox transaction');
+    },
+
+    async voidTransaction(transactionId: string): Promise<TxRow> {
+        const response = await apiFetch(`/acc/void_transaction/${encodeURIComponent(transactionId)}`, {
+            method: 'POST',
+        });
+        return parseApiResponse<TxRow>(response, 'Failed to void inbox transaction');
+    },
 
 
     async listAccounts(): Promise<AccountRow[]> {
