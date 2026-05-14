@@ -19,15 +19,25 @@ export type JournalEntryLine = {
     line_type?: string | null;
     amount?: number | string | null;
     account_id?: string | null;
+    account_code?: string | null;
+    account_name?: string | null;
+    account_label?: string | null;
+    description?: string | null;
     [key: string]: unknown;
 };
 
 export type JournalEntryRow = {
     id: string;
     transaction_id?: string | null;
+    entry_no?: number | string | null;
+    entry_date?: string | null;
     memo?: string | null;
     confidence?: number | string | null;
     rationale?: string | null;
+    source?: string | null;
+    period_yyyymm?: number | string | null;
+    posted_at?: string | null;
+    is_reversal?: boolean | null;
     lines?: JournalEntryLine[];
     status?: string | null;
     [key: string]: unknown;
@@ -47,6 +57,18 @@ export type LedgerRow = {
 type ApplyCoaResponse = {
     created: number;
     existing: number;
+};
+
+export type JournalEntryUpdatePayload = {
+    entry_date?: string | null;
+    memo?: string | null;
+    lines: {
+        id?: string | null;
+        account_id: string;
+        line_type: 'debit' | 'credit';
+        amount: number | string;
+        description?: string | null;
+    }[];
 };
 
 async function parseApiResponse<T>(response: Response, message: string): Promise<T> {
@@ -77,7 +99,7 @@ export const jeAPI = {
     },
 
     async listEntries(): Promise<JournalEntryRow[]> {
-        const response = await apiFetch('/acc/journal-entries?limit=200');
+        const response = await apiFetch('/acc/je/getlist?limit=200');
         return parseApiResponse<JournalEntryRow[]>(response, 'Failed to fetch journal entries');
     },
 
@@ -91,10 +113,18 @@ export const jeAPI = {
     },
 
     async generateEntry(transactionId: string): Promise<JournalEntryRow> {
-        const response = await apiFetch('/acc/journal-entries/generate', {
+        const response = await apiFetch('/acc/je/generate', {
             method: 'POST',
-            body: JSON.stringify({ transaction_id: transactionId }),
+            body: JSON.stringify({ transaction_id: transactionId, force: false }),
         });
         return parseApiResponse<JournalEntryRow>(response, 'Failed to generate journal entry');
+    },
+
+    async updateEntry(journalEntryId: string, payload: JournalEntryUpdatePayload): Promise<JournalEntryRow> {
+        const response = await apiFetch(`/acc/je/${encodeURIComponent(journalEntryId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(payload),
+        });
+        return parseApiResponse<JournalEntryRow>(response, 'Failed to update journal entry');
     },
 };
