@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from 'src/components/ui/card';
 import { Button } from 'src/components/ui/button';
+import { Input } from 'src/components/ui/input';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from 'src/components/ui/dropdown-menu';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
 import { Icon } from '@iconify/react/dist/iconify.js';
+import { TbDotsVertical } from 'react-icons/tb';
 import { formatMoney } from 'src/core/format';
 import { inboxAPI, TxRow } from 'src/accounting/inbox/inbox-api';
 
@@ -13,6 +16,15 @@ type StreamItem = {
     pending?: boolean;
     injectionText?: string;
 };
+
+type TransactionDraft = {
+    txn_date: string;
+    description: string;
+    amount: string;
+    status: string;
+};
+
+type TransactionField = keyof TransactionDraft;
 
 const pageSize = 10;
 
@@ -46,6 +58,9 @@ const getInjectionItems = (value: string): StreamItem[] => {
 const Inbox = () => {
     const [transactions, setTransactions] = useState<TxRow[]>([]);
     const [pageIndex, setPageIndex] = useState(0);
+    const [editingRows, setEditingRows] = useState<Record<string, boolean>>({});
+    const [transactionDrafts, setTransactionDrafts] = useState<Record<string, TransactionDraft>>({});
+    const [savingRows, setSavingRows] = useState<Record<string, boolean>>({});
     const [loading, setLoading] = useState(false);
     const [msg, setMsg] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -60,6 +75,23 @@ const Inbox = () => {
         amount: '',
         status: '',
     });
+
+    const toTransactionDraft = (row: TxRow): TransactionDraft => ({
+        txn_date: row.txn_date || '',
+        description: row.description || '',
+        amount: String(row.amount ?? ''),
+        status: row.status || '',
+    });
+
+    const updateInboxTransactionPlaceholder = async (rowId: string, updates: Partial<TxRow>) => {
+        console.info('TODO: replace with backend inbox transaction update', { rowId, updates });
+        await Promise.resolve();
+    };
+
+    const deleteInboxTransactionPlaceholder = async (rowId: string) => {
+        console.info('TODO: replace with backend inbox transaction delete', { rowId });
+        await Promise.resolve();
+    };
 
     const refresh = async () => {
         setLoading(true);
@@ -221,6 +253,79 @@ const Inbox = () => {
     const startVoiceInput = () => {
         setError(null);
         setMsg('Voice input coming soon.');
+    };
+
+    const startEditingTransaction = (row: TxRow) => {
+        setMsg(null);
+        setEditingRows((prev) => ({ ...prev, [row.id]: true }));
+        setTransactionDrafts((prev) => ({
+            ...prev,
+            [row.id]: prev[row.id] ?? toTransactionDraft(row),
+        }));
+    };
+
+    const updateTransactionDraft = (rowId: string, field: TransactionField, value: string) => {
+        setTransactionDrafts((prev) => ({
+            ...prev,
+            [rowId]: {
+                ...(prev[rowId] ?? { txn_date: '', description: '', amount: '', status: '' }),
+                [field]: value,
+            },
+        }));
+    };
+
+    const saveTransactionDraft = async (row: TxRow, field: TransactionField) => {
+        const draft = transactionDrafts[row.id];
+        if (!draft) return;
+
+        const nextValue = draft[field].trim();
+        const currentValue = String(row[field] ?? '').trim();
+        if (nextValue === currentValue) return;
+
+        const updates: Partial<TxRow> = {
+            [field]: field === 'amount' ? Number(nextValue) || 0 : nextValue,
+        };
+
+        setSavingRows((prev) => ({ ...prev, [row.id]: true }));
+        setTransactions((prev) =>
+            prev.map((transaction) =>
+                transaction.id === row.id
+                    ? { ...transaction, ...updates }
+                    : transaction,
+            ),
+        );
+        setError(null);
+
+        try {
+            await updateInboxTransactionPlaceholder(row.id, updates);
+            setMsg('Inbox transaction saved.');
+        } catch (e: any) {
+            setError(e?.message || 'Failed to save inbox transaction.');
+        } finally {
+            setSavingRows((prev) => ({ ...prev, [row.id]: false }));
+        }
+    };
+
+    const stopEditingTransaction = (rowId: string) => {
+        setEditingRows((prev) => ({ ...prev, [rowId]: false }));
+    };
+
+    const deleteTransaction = async (row: TxRow) => {
+        setError(null);
+        setMsg(null);
+        setSavingRows((prev) => ({ ...prev, [row.id]: true }));
+        setTransactions((prev) => prev.filter((transaction) => transaction.id !== row.id));
+        setEditingRows((prev) => ({ ...prev, [row.id]: false }));
+
+        try {
+            await deleteInboxTransactionPlaceholder(row.id);
+            setMsg('Inbox transaction deleted.');
+        } catch (e: any) {
+            setError(e?.message || 'Failed to delete inbox transaction.');
+            setTransactions((prev) => [row, ...prev]);
+        } finally {
+            setSavingRows((prev) => ({ ...prev, [row.id]: false }));
+        }
     };
 
     useEffect(() => {
@@ -392,29 +497,115 @@ const Inbox = () => {
                                             <THead className="min-w-3 px-2">Description</THead>
                                             <THead className="min-w-3 px-2 text-right">Amount</THead>
                                             <THead className="min-w-3 px-2">Status</THead>
+                                            <THead className="min-w-3 px-2 text-right">Action</THead>
                                         </TRow>
                                     </THeader>
                                     <TBody>
-                                        {pageData.map((row) => (
-                                            <TRow key={row.id} className="hover:bg-primary/10 transition-colors">
-                                                <TCell className="text-sm px-2 py-3">{row.txn_date || '-'}</TCell>
-                                                <TCell className="text-sm px-2 py-3">{row.description || '-'}</TCell>
-                                                <TCell className="text-sm px-2 py-3 text-right tabular-nums">
-                                                    {formatMoney(row.amount ?? 0)}
-                                                </TCell>
-                                                <TCell className="text-sm px-2 py-3">{row.status || '-'}</TCell>
-                                            </TRow>
-                                        ))}
+                                        {pageData.map((row) => {
+                                            const isEditing = Boolean(editingRows[row.id]);
+                                            const draft = transactionDrafts[row.id] ?? toTransactionDraft(row);
+                                            const inputClassName = 'h-9 rounded-md px-2 text-sm';
+
+                                            return (
+                                                <TRow key={row.id} className="hover:bg-primary/10 transition-colors">
+                                                    <TCell className="text-sm px-2 py-3">
+                                                        {isEditing ? (
+                                                            <Input
+                                                                type="date"
+                                                                className={inputClassName}
+                                                                value={draft.txn_date}
+                                                                onChange={(e) => updateTransactionDraft(row.id, 'txn_date', e.target.value)}
+                                                                onBlur={() => saveTransactionDraft(row, 'txn_date')}
+                                                            />
+                                                        ) : (
+                                                            row.txn_date || '-'
+                                                        )}
+                                                    </TCell>
+                                                    <TCell className="text-sm px-2 py-3">
+                                                        {isEditing ? (
+                                                            <Input
+                                                                className={inputClassName}
+                                                                value={draft.description}
+                                                                onChange={(e) => updateTransactionDraft(row.id, 'description', e.target.value)}
+                                                                onBlur={() => saveTransactionDraft(row, 'description')}
+                                                            />
+                                                        ) : (
+                                                            row.description || '-'
+                                                        )}
+                                                    </TCell>
+                                                    <TCell className="text-sm px-2 py-3 text-right tabular-nums">
+                                                        {isEditing ? (
+                                                            <Input
+                                                                type="number"
+                                                                step="0.01"
+                                                                className={`${inputClassName} text-right tabular-nums`}
+                                                                value={draft.amount}
+                                                                onChange={(e) => updateTransactionDraft(row.id, 'amount', e.target.value)}
+                                                                onBlur={() => saveTransactionDraft(row, 'amount')}
+                                                            />
+                                                        ) : (
+                                                            formatMoney(row.amount ?? 0)
+                                                        )}
+                                                    </TCell>
+                                                    <TCell className="text-sm px-2 py-3">
+                                                        {isEditing ? (
+                                                            <Input
+                                                                className={inputClassName}
+                                                                value={draft.status}
+                                                                onChange={(e) => updateTransactionDraft(row.id, 'status', e.target.value)}
+                                                                onBlur={() => saveTransactionDraft(row, 'status')}
+                                                            />
+                                                        ) : (
+                                                            row.status || '-'
+                                                        )}
+                                                    </TCell>
+                                                    <TCell className="text-sm px-2 py-3 text-right">
+                                                        <DropdownMenu>
+                                                            <DropdownMenuTrigger asChild>
+                                                                <button
+                                                                    type="button"
+                                                                    className="ml-auto flex h-9 w-9 items-center justify-center rounded-full hover:bg-lightprimary hover:text-primary disabled:pointer-events-none disabled:opacity-50"
+                                                                    disabled={Boolean(savingRows[row.id])}
+                                                                    aria-label="Transaction actions"
+                                                                >
+                                                                    <TbDotsVertical size={22} />
+                                                                </button>
+                                                            </DropdownMenuTrigger>
+                                                            <DropdownMenuContent align="end" className="w-40">
+                                                                <DropdownMenuItem
+                                                                    className="flex cursor-pointer items-center gap-3"
+                                                                    onClick={() =>
+                                                                        isEditing
+                                                                            ? stopEditingTransaction(row.id)
+                                                                            : startEditingTransaction(row)
+                                                                    }
+                                                                >
+                                                                    <Icon icon={isEditing ? 'mdi:check' : 'solar:pen-new-square-broken'} height={18} />
+                                                                    <span>{isEditing ? 'Done' : 'Edit'}</span>
+                                                                </DropdownMenuItem>
+                                                                <DropdownMenuItem
+                                                                    className="flex cursor-pointer items-center gap-3 text-red-600 focus:text-red-600"
+                                                                    onClick={() => void deleteTransaction(row)}
+                                                                >
+                                                                    <Icon icon="solar:trash-bin-minimalistic-outline" height={18} />
+                                                                    <span>Delete</span>
+                                                                </DropdownMenuItem>
+                                                            </DropdownMenuContent>
+                                                        </DropdownMenu>
+                                                    </TCell>
+                                                </TRow>
+                                            );
+                                        })}
                                         {loading ? (
                                             <TRow>
-                                                <TCell className="text-sm px-2 py-4 text-muted-foreground" colSpan={4}>
+                                                <TCell className="text-sm px-2 py-4 text-muted-foreground" colSpan={5}>
                                                     Loading inbox transactions...
                                                 </TCell>
                                             </TRow>
                                         ) : null}
                                         {!loading && transactions.length === 0 ? (
                                             <TRow>
-                                                <TCell className="text-sm px-2 py-4 text-muted-foreground" colSpan={4}>
+                                                <TCell className="text-sm px-2 py-4 text-muted-foreground" colSpan={5}>
                                                     No inbox transactions yet.
                                                 </TCell>
                                             </TRow>
