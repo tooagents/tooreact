@@ -2,10 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from 'src/components/ui/card';
 import { Button } from 'src/components/ui/button';
 import { Input } from 'src/components/ui/input';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from 'src/components/ui/dropdown-menu';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'src/components/ui/select';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
 import { Icon } from '@iconify/react/dist/iconify.js';
-import { TbDotsVertical } from 'react-icons/tb';
 import { formatMoney } from 'src/core/format';
 import { inboxAPI, TxRow } from 'src/accounting/inbox/inbox-api';
 
@@ -27,15 +26,39 @@ type TransactionDraft = {
 type TransactionField = keyof TransactionDraft;
 
 const pageSize = 10;
+const statusOptions = [
+    { value: 'review', label: 'Review' },
+    { value: 'posted', label: 'Posted' },
+    { value: 'closed', label: 'Closed' },
+    { value: 'void', label: 'Void' },
+];
+
+const normalizeTransactionStatus = (value: string) => {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'new') return 'posted';
+    if (normalized === 'deleted') return 'void';
+    return normalized;
+};
+
+const formatTransactionStatus = (value: string) => {
+    const normalized = normalizeTransactionStatus(value);
+    const option = statusOptions.find((status) => status.value === normalized);
+    return option?.label || value || '-';
+};
 
 const getInjectionItems = (value: string): StreamItem[] => {
     if (value.trim().length === 0) return [];
 
     const injectedTokens: string[] = [];
     const matches = [...value.matchAll(/\S+/g)];
+    const firstNumberMatch = matches.find((match) => /\d/.test(match[0]));
+    const firstNumberIndex = firstNumberMatch?.index;
 
     matches.forEach((match) => {
         const token = match[0];
+        const startIndex = match.index ?? 0;
+        if (firstNumberIndex !== undefined && startIndex >= firstNumberIndex) return;
+
         const endIndex = (match.index ?? 0) + token.length;
         const isComplete = endIndex < value.length && /\s/.test(value.charAt(endIndex));
         const hasNumber = /\d/.test(token);
@@ -45,11 +68,19 @@ const getInjectionItems = (value: string): StreamItem[] => {
         }
     });
 
+    const injectionText =
+        firstNumberIndex === undefined
+            ? injectedTokens.join(' ')
+            : [
+                injectedTokens.join(' '),
+                value.slice(firstNumberIndex).trimStart(),
+            ].filter(Boolean).join(' ');
+
     return [
         {
             event: 'ai_injection_waiting',
             title: 'AI Injection',
-            injectionText: injectedTokens.join(' '),
+            injectionText,
             pending: true,
         },
     ];
@@ -274,11 +305,11 @@ const Inbox = () => {
         }));
     };
 
-    const saveTransactionDraft = async (row: TxRow, field: TransactionField) => {
+    const saveTransactionDraft = async (row: TxRow, field: TransactionField, overrideValue?: string) => {
         const draft = transactionDrafts[row.id];
-        if (!draft) return;
+        if (!draft && overrideValue === undefined) return;
 
-        const nextValue = draft[field].trim();
+        const nextValue = (overrideValue ?? draft?.[field] ?? '').trim();
         const currentValue = String(row[field] ?? '').trim();
         if (nextValue === currentValue) return;
 
@@ -308,6 +339,11 @@ const Inbox = () => {
 
     const stopEditingTransaction = (rowId: string) => {
         setEditingRows((prev) => ({ ...prev, [rowId]: false }));
+    };
+
+    const updateTransactionStatus = (row: TxRow, value: string) => {
+        updateTransactionDraft(row.id, 'status', value);
+        void saveTransactionDraft(row, 'status', value);
     };
 
     const deleteTransaction = async (row: TxRow) => {
@@ -549,49 +585,41 @@ const Inbox = () => {
                                                     </TCell>
                                                     <TCell className="text-sm px-2 py-3">
                                                         {isEditing ? (
-                                                            <Input
-                                                                className={inputClassName}
-                                                                value={draft.status}
-                                                                onChange={(e) => updateTransactionDraft(row.id, 'status', e.target.value)}
-                                                                onBlur={() => saveTransactionDraft(row, 'status')}
-                                                            />
+                                                            <Select
+                                                                value={statusOptions.some((status) => status.value === normalizeTransactionStatus(draft.status))
+                                                                    ? normalizeTransactionStatus(draft.status)
+                                                                    : undefined}
+                                                                onValueChange={(value) => updateTransactionStatus(row, value)}
+                                                            >
+                                                                <SelectTrigger className={inputClassName}>
+                                                                    <SelectValue placeholder="Select status" />
+                                                                </SelectTrigger>
+                                                                <SelectContent>
+                                                                    {statusOptions.map((status) => (
+                                                                        <SelectItem key={status.value} value={status.value}>
+                                                                            {status.label}
+                                                                        </SelectItem>
+                                                                    ))}
+                                                                </SelectContent>
+                                                            </Select>
                                                         ) : (
-                                                            row.status || '-'
+                                                            formatTransactionStatus(row.status || '')
                                                         )}
                                                     </TCell>
                                                     <TCell className="text-sm px-2 py-3 text-right">
-                                                        <DropdownMenu>
-                                                            <DropdownMenuTrigger asChild>
-                                                                <button
-                                                                    type="button"
-                                                                    className="ml-auto flex h-9 w-9 items-center justify-center rounded-full hover:bg-lightprimary hover:text-primary disabled:pointer-events-none disabled:opacity-50"
-                                                                    disabled={Boolean(savingRows[row.id])}
-                                                                    aria-label="Transaction actions"
-                                                                >
-                                                                    <TbDotsVertical size={22} />
-                                                                </button>
-                                                            </DropdownMenuTrigger>
-                                                            <DropdownMenuContent align="end" className="w-40">
-                                                                <DropdownMenuItem
-                                                                    className="flex cursor-pointer items-center gap-3"
-                                                                    onClick={() =>
-                                                                        isEditing
-                                                                            ? stopEditingTransaction(row.id)
-                                                                            : startEditingTransaction(row)
-                                                                    }
-                                                                >
-                                                                    <Icon icon={isEditing ? 'mdi:check' : 'solar:pen-new-square-broken'} height={18} />
-                                                                    <span>{isEditing ? 'Done' : 'Edit'}</span>
-                                                                </DropdownMenuItem>
-                                                                <DropdownMenuItem
-                                                                    className="flex cursor-pointer items-center gap-3 text-red-600 focus:text-red-600"
-                                                                    onClick={() => void deleteTransaction(row)}
-                                                                >
-                                                                    <Icon icon="solar:trash-bin-minimalistic-outline" height={18} />
-                                                                    <span>Delete</span>
-                                                                </DropdownMenuItem>
-                                                            </DropdownMenuContent>
-                                                        </DropdownMenu>
+                                                        <button
+                                                            type="button"
+                                                            className="ml-auto flex h-9 w-9 items-center justify-center rounded-full hover:bg-lightprimary hover:text-primary disabled:pointer-events-none disabled:opacity-50"
+                                                            disabled={Boolean(savingRows[row.id])}
+                                                            aria-label={isEditing ? 'Done editing transaction' : 'Edit transaction'}
+                                                            onClick={() =>
+                                                                isEditing
+                                                                    ? stopEditingTransaction(row.id)
+                                                                    : startEditingTransaction(row)
+                                                            }
+                                                        >
+                                                            <Icon icon={isEditing ? 'mdi:check' : 'solar:pen-new-square-broken'} height={18} />
+                                                        </button>
                                                     </TCell>
                                                 </TRow>
                                             );
