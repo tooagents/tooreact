@@ -7,6 +7,7 @@ import {
     getConfidence,
     getEmbeddedJournalEntry,
     getTransactionJournalId,
+    formatJournalLineAccount,
     JournalEntryPreview,
     ledgerPaperStyle,
 } from 'src/accounting/inbox/inbox-journal-entry';
@@ -131,7 +132,7 @@ const InboxJournalEntryPanel = ({ transaction, onEntryResolved }: InboxJournalEn
                                                     {formatMoney(line.amount ?? 0)}
                                                 </TCell>
                                                 <TCell className="text-sm px-2 py-2 text-[#1f2f4a]">
-                                                    {line.account_label || line.account_id || '-'}
+                                                    {formatJournalLineAccount(line)}
                                                 </TCell>
                                             </TRow>
                                         ))}

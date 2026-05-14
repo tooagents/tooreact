@@ -5,6 +5,8 @@ export type JournalEntryLine = {
     line_type?: string | null;
     amount?: number | string | null;
     account_id?: string | null;
+    account_code?: string | null;
+    account_name?: string | null;
     account_label?: string | null;
     [key: string]: unknown;
 };
@@ -71,4 +73,16 @@ export const getEmbeddedJournalEntry = (row: TxRow | undefined): JournalEntryPre
 
     const apiEntry = row.journal_entry ?? row.journalEntry ?? row.je;
     return isJournalEntryPreview(apiEntry) ? apiEntry : null;
+};
+
+export const formatJournalLineAccount = (line: JournalEntryLine) => {
+    const accountCode = String(line.account_code ?? '').trim();
+    const accountName = String(line.account_name ?? '').trim();
+    const accountLabel = String(line.account_label ?? '').trim();
+    const accountId = String(line.account_id ?? '').trim();
+
+    if (accountCode && accountName) return `${accountCode} ${accountName}`;
+    if (accountCode) return accountCode;
+    if (accountName) return accountName;
+    return accountLabel || accountId || '-';
 };
