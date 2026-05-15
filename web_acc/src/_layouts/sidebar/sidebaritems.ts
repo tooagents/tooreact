@@ -52,7 +52,7 @@ const SidebarContent: MenuItem[] = [
         heading: 'AI Accounting',
         children: [
             {
-                name: 'Inbox',
+                name: 'Workspace',
                 icon: 'solar:ufo-linear',
                 id: uniqueId(),
                 url: '/app/acc/inbox',

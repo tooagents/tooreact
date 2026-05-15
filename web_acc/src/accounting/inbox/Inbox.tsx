@@ -3,13 +3,14 @@ import { Icon } from '@iconify/react/dist/iconify.js';
 import { Badge } from 'src/components/ui/badge';
 import { Button } from 'src/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from 'src/components/ui/card';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from 'src/components/ui/dropdown-menu';
 import { Input } from 'src/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'src/components/ui/select';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
 import { formatMoney } from 'src/core/format';
 import { inboxAPI } from 'src/accounting/inbox/inbox-api';
 import { ledgerPaperStyle } from 'src/accounting/inbox/inbox-journal-entry';
-import { AccountRow, jeAPI, JournalEntryLine, JournalEntryRow } from 'src/accounting/je/je-api';
+import { AccountRow, jeAPI, JournalEntryRow } from 'src/accounting/je/je-api';
 
 type StreamItem = {
     event: string;
@@ -149,6 +150,8 @@ const getDisplayStatus = (entry: JournalEntryRow) => {
     const period = String(entry.period_yyyymm ?? '').trim();
     return period || 'entry';
 };
+
+const getEntryStatus = (entry: JournalEntryRow) => String(entry.status ?? '').trim() || '-';
 
 const toDraft = (entry: JournalEntryRow): JournalEntryDraft => ({
     entry_date: String(entry.entry_date ?? ''),
@@ -618,24 +621,30 @@ const Inbox = () => {
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                     <Card className="shadow-none border-[#d8c6a1] bg-[#f8f1de]">
                         <CardHeader className="p-4">
-                            <CardTitle className="text-base text-[#2b2f38]">Inbox Transactions</CardTitle>
+                            <CardTitle className="text-base text-[#2b2f38]">Transactions</CardTitle>
                         </CardHeader>
                         <CardContent className="p-0">
                             <div className="overflow-x-auto border-t border-[#d8c6a1]">
-                                <Table>
+                                <Table className="table-fixed">
+                                    <colgroup>
+                                        <col className="w-[76px]" />
+                                        <col />
+                                        <col className="w-[92px]" />
+                                        <col className="w-[72px]" />
+                                        <col className="w-[44px]" />
+                                    </colgroup>
                                     <THeader>
                                         <TRow className="border-b border-[#d8c6a1]">
-                                            <THead className="min-w-28 px-3 text-[#1f3a67]">Transaction Date</THead>
-                                            <THead className="min-w-56 px-3 text-[#1f3a67]">Description</THead>
-                                            <THead className="min-w-28 px-3 text-right text-[#1f3a67]">Amount</THead>
-                                            <THead className="min-w-24 px-3 text-[#1f3a67]">Status</THead>
-                                            <THead className="min-w-20 px-3 text-right text-[#1f3a67]">Action</THead>
+                                            <THead className="overflow-hidden px-2 text-[#1f3a67]">Txn Date</THead>
+                                            <THead className="overflow-hidden px-1 text-[#1f3a67]">Description/Memo</THead>
+                                            <THead className="overflow-hidden px-2 text-right text-[#1f3a67]">Amount</THead>
+                                            <THead className="overflow-hidden px-2 text-[#1f3a67]">Status</THead>
+                                            <THead className="overflow-hidden px-1 text-right text-[#1f3a67]">Action</THead>
                                         </TRow>
                                     </THeader>
                                     <TBody>
                                         {pageData.map((entry) => {
                                             const isSelected = entry.id === selectedEntry?.id;
-                                            const isEditing = editingEntryId === entry.id;
 
                                             return (
                                                 <TRow
@@ -659,39 +668,56 @@ const Inbox = () => {
                                                         }
                                                     }}
                                                 >
-                                                    <TCell className="px-3 py-3 text-sm font-semibold text-[#1f2f4a]">
+                                                    <TCell className="w-[76px] px-2 py-3 text-xs text-[#1f2f4a]">
                                                         {entry.entry_date || '-'}
                                                     </TCell>
-                                                    <TCell className="px-3 py-3 text-sm text-[#1f2f4a]">
-                                                        <div className="line-clamp-2">{entry.memo || 'No description'}</div>
+                                                    <TCell className="min-w-0 whitespace-normal px-1 py-3 text-sm text-[#1f2f4a]">
+                                                        <div className="line-clamp-2">
+                                                            <span>{entry.memo || 'No description'}</span>
+                                                            <span className="ml-1 text-xs font-normal text-[#6f7d95]">/ {getEntryLabel(entry)}</span>
+                                                        </div>
                                                     </TCell>
-                                                    <TCell className="px-3 py-3 text-right text-sm font-mono tabular-nums text-[#1f2f4a]">
+                                                    <TCell className="w-[92px] px-2 py-3 text-right text-sm font-mono tabular-nums text-[#1f2f4a]">
                                                         {formatMoney(getEntryTotal(entry))}
                                                     </TCell>
-                                                    <TCell className="px-3 py-3 text-sm text-[#506080]">
-                                                        {getDisplayStatus(entry)}
+                                                    <TCell className="w-[72px] px-2 py-3 text-sm text-[#506080]">
+                                                        {getEntryStatus(entry)}
                                                     </TCell>
-                                                    <TCell className="px-3 py-3 text-right text-sm text-[#1f2f4a]">
-                                                        <button
-                                                            type="button"
-                                                            className="inline-flex h-6 w-6 items-center justify-center rounded-full text-[#1f3a67] hover:bg-[#efe4c7] disabled:pointer-events-none disabled:opacity-50"
-                                                            disabled={isSavingEntry}
-                                                            aria-label={isEditing ? 'Save inbox transaction' : 'Edit inbox transaction'}
-                                                            onClick={(event) => {
-                                                                event.stopPropagation();
-                                                                if (isEditing) {
-                                                                    void saveEntryDraft();
-                                                                    return;
-                                                                }
-                                                                startEditingEntry(entry);
-                                                            }}
-                                                        >
-                                                            <Icon
-                                                                icon={isSavingEntry && isEditing ? 'mdi:loading' : isEditing ? 'mdi:check' : 'solar:pen-new-square-broken'}
-                                                                height={16}
-                                                                className={isSavingEntry && isEditing ? 'animate-spin' : undefined}
-                                                            />
-                                                        </button>
+                                                    <TCell className="w-[44px] px-1 py-3 text-right text-sm text-[#1f2f4a]">
+                                                        <DropdownMenu>
+                                                            <DropdownMenuTrigger asChild>
+                                                                <button
+                                                                    type="button"
+                                                                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#1f3a67] hover:bg-[#efe4c7]"
+                                                                    aria-label="Inbox transaction actions"
+                                                                    onClick={(event) => event.stopPropagation()}
+                                                                    onKeyDown={(event) => event.stopPropagation()}
+                                                                >
+                                                                    <Icon icon="mdi:dots-vertical" height={18} />
+                                                                </button>
+                                                            </DropdownMenuTrigger>
+                                                            <DropdownMenuContent align="end" className="w-36">
+                                                                <DropdownMenuItem
+                                                                    className="flex items-center gap-2"
+                                                                    onClick={(event) => {
+                                                                        event.stopPropagation();
+                                                                        startEditingEntry(entry);
+                                                                    }}
+                                                                >
+                                                                    <Icon icon="solar:pen-new-square-broken" height={16} />
+                                                                    <span>Edit</span>
+                                                                </DropdownMenuItem>
+                                                                <DropdownMenuItem
+                                                                    className="flex items-center gap-2 text-red-600 focus:text-red-600"
+                                                                    onClick={(event) => {
+                                                                        event.stopPropagation();
+                                                                    }}
+                                                                >
+                                                                    <Icon icon="solar:trash-bin-minimalistic-outline" height={16} />
+                                                                    <span>Delete</span>
+                                                                </DropdownMenuItem>
+                                                            </DropdownMenuContent>
+                                                        </DropdownMenu>
                                                     </TCell>
                                                 </TRow>
                                             );
@@ -734,7 +760,7 @@ const Inbox = () => {
                                             </Button>
                                         </div>
 
-                                        <div className="text-forest-black dark:text-white/90 font-medium text-xs sm:text-base whitespace-nowrap">
+                                        <div className="text-forest-black dark:text-white/90 text-xs xs:text-base whitespace-nowrap">
                                             Page {pageIndex + 1} of {pageCount}
                                         </div>
                                     </div>
