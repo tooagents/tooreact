@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Icon } from '@iconify/react/dist/iconify.js';
 import BreadcrumbComp from 'src/_layouts/shared/breadcrumb/BreadcrumbComp';
 import LoadingSpinner from 'src/components/shared/LoadingSpinner';
+import { Badge } from 'src/components/ui/badge';
 import { Button } from 'src/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from 'src/components/ui/card';
 import { Input } from 'src/components/ui/input';
@@ -25,11 +26,6 @@ type JournalEntryDraft = {
     entry_date: string;
     memo: string;
     lines: JournalLineDraft[];
-};
-
-const getConfidence = (entry: JournalEntryRow) => {
-    const value = Number(entry.confidence);
-    return Number.isFinite(value) ? value.toFixed(2) : '-';
 };
 
 const getAccountLabel = (account: AccountRow) => {
@@ -65,9 +61,38 @@ const getEntryTotal = (entry: JournalEntryRow) => {
     }, 0);
 };
 
+const getEntryLineTotals = (entry: JournalEntryRow | undefined) => {
+    const lines = entry?.lines ?? [];
+    const debit = lines.reduce((sum, line) => {
+        const amount = Number(line.amount ?? 0);
+        return String(line.line_type ?? '').toLowerCase() === 'debit' && Number.isFinite(amount)
+            ? sum + amount
+            : sum;
+    }, 0);
+    const credit = lines.reduce((sum, line) => {
+        const amount = Number(line.amount ?? 0);
+        return String(line.line_type ?? '').toLowerCase() === 'credit' && Number.isFinite(amount)
+            ? sum + amount
+            : sum;
+    }, 0);
+
+    return {
+        debit,
+        credit,
+        difference: debit - credit,
+    };
+};
+
 const getEntryLabel = (entry: JournalEntryRow) => {
     const entryNo = String(entry.entry_no ?? '').trim();
     return entryNo ? `JE-${entryNo}` : entry.id.slice(0, 8);
+};
+
+const getDisplayStatus = (entry: JournalEntryRow) => {
+    const status = String(entry.status ?? '').trim();
+    if (status) return status;
+    const period = String(entry.period_yyyymm ?? '').trim();
+    return period || 'entry';
 };
 
 const toDraft = (entry: JournalEntryRow): JournalEntryDraft => ({
@@ -157,6 +182,7 @@ const Entries = () => {
 
     const selectedEntry = entries.find((entry) => entry.id === selectedEntryId) ?? entries[0];
     const isEditingSelectedEntry = Boolean(selectedEntry && editingEntryId === selectedEntry.id && entryDraft);
+    const selectedEntryTotals = getEntryLineTotals(selectedEntry);
     const draftTotals = getDraftTotals(entryDraft);
     const isDraftBalanced = entryDraft !== null &&
         entryDraft.lines.length > 0 &&
@@ -356,12 +382,17 @@ const Entries = () => {
                         </CardContent>
                     </Card>
 
-                    <Card className="shadow-none border-secondary/20">
-                        <CardHeader className="p-4">
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                <CardTitle className="text-base">Journal Entry</CardTitle>
+                    <Card className="shadow-none border-[#cdd8e8] bg-white">
+                        <CardHeader className="p-4 pb-3">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div className="flex flex-col gap-1">
+                                    <CardTitle className="text-base text-[#1f2f4a]">Journal Entry</CardTitle>
+                                    <p className="text-xs text-[#64748b]">
+                                        Review the selected ledger entry before posting changes.
+                                    </p>
+                                </div>
                                 {selectedEntry ? (
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex shrink-0 items-center gap-2">
                                         {isEditingSelectedEntry ? (
                                             <>
                                                 <Button
@@ -401,167 +432,220 @@ const Entries = () => {
                                 ) : null}
                             </div>
                         </CardHeader>
-                        <CardContent className="p-4 min-h-[220px] border-t border-ld">
+                        <CardContent className="min-h-[220px] border-t border-[#dbe4f0] p-0">
                             {selectedEntry ? (
-                                <div className="flex flex-col gap-3">
-                                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
-                                        <div>
+                                <div className="flex flex-col">
+                                    <div className="border-b border-[#dbe4f0] bg-[#f8fafc] p-4">
+                                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                                             {isEditingSelectedEntry && entryDraft ? (
-                                                <div className="grid gap-2 sm:grid-cols-[150px_minmax(220px,1fr)]">
+                                                <div className="min-w-0">
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-[#1f3a67]">
+                                                            {getEntryLabel(selectedEntry)}
+                                                        </span>
+                                                        <Badge className="border-[#b7c7df] bg-white px-2 py-0.5 text-[#335376]">
+                                                            {getDisplayStatus(selectedEntry)}
+                                                        </Badge>
+                                                    </div>
                                                     <Input
-                                                        type="date"
-                                                        className="h-9"
-                                                        value={entryDraft.entry_date}
-                                                        onChange={(event) => updateDraftHeader('entry_date', event.target.value)}
-                                                        disabled={isSavingEntry}
-                                                    />
-                                                    <Input
-                                                        className="h-9"
+                                                        className="mt-1.5 h-7 max-w-full border-[#cbd5e1] bg-white px-2 text-sm font-semibold text-[#172033]"
                                                         value={entryDraft.memo}
                                                         onChange={(event) => updateDraftHeader('memo', event.target.value)}
                                                         placeholder="Memo"
                                                         disabled={isSavingEntry}
                                                     />
+                                                    <Input
+                                                        type="date"
+                                                        className="mt-1 h-7 w-[135px] border-[#cbd5e1] bg-white px-2 text-xs text-[#64748b]"
+                                                        value={entryDraft.entry_date}
+                                                        onChange={(event) => updateDraftHeader('entry_date', event.target.value)}
+                                                        disabled={isSavingEntry}
+                                                    />
                                                 </div>
                                             ) : (
-                                                <>
-                                                    <div className="font-semibold text-sm text-foreground">
-                                                        {getEntryLabel(selectedEntry)} · {selectedEntry.memo || 'No memo'}
+                                                <div className="min-w-0">
+                                                    <div className="flex flex-wrap items-center gap-2">
+                                                        <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-[#1f3a67]">
+                                                            {getEntryLabel(selectedEntry)}
+                                                        </span>
+                                                        <Badge className="border-[#b7c7df] bg-white px-2 py-0.5 text-[#335376]">
+                                                            {getDisplayStatus(selectedEntry)}
+                                                        </Badge>
                                                     </div>
-                                                    <div className="text-xs text-muted-foreground">
-                                                        {selectedEntry.entry_date || '-'} · {selectedEntry.source || 'entry'} · Confidence {getConfidence(selectedEntry)}
+                                                    <div className="mt-2 text-sm font-semibold text-[#172033]">
+                                                        {selectedEntry.memo || 'No memo'}
                                                     </div>
-                                                </>
+                                                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#64748b]">
+                                                        <span>{selectedEntry.entry_date || '-'}</span>
+                                                    </div>
+                                                </div>
                                             )}
-                                        </div>
-                                        <div className="text-xs text-muted-foreground">
-                                            {selectedEntry.status || selectedEntry.period_yyyymm || ''}
+                                            <div className="grid grid-cols-3 gap-2 lg:min-w-[300px]">
+                                                <div className="rounded-md border border-[#dbe4f0] bg-white px-3 py-2">
+                                                    <div className="text-[11px] font-medium uppercase text-[#64748b]">Debit</div>
+                                                    <div className="mt-1 font-mono text-sm font-semibold tabular-nums text-[#172033]">
+                                                        {formatMoney(isEditingSelectedEntry ? draftTotals.debit : selectedEntryTotals.debit)}
+                                                    </div>
+                                                </div>
+                                                <div className="rounded-md border border-[#dbe4f0] bg-white px-3 py-2">
+                                                    <div className="text-[11px] font-medium uppercase text-[#64748b]">Credit</div>
+                                                    <div className="mt-1 font-mono text-sm font-semibold tabular-nums text-[#172033]">
+                                                        {formatMoney(isEditingSelectedEntry ? draftTotals.credit : selectedEntryTotals.credit)}
+                                                    </div>
+                                                </div>
+                                                <div className="rounded-md border border-[#dbe4f0] bg-white px-3 py-2">
+                                                    <div className="text-[11px] font-medium uppercase text-[#64748b]">Diff</div>
+                                                    <div className={`mt-1 font-mono text-sm font-semibold tabular-nums ${Math.abs((isEditingSelectedEntry ? draftTotals : selectedEntryTotals).difference) < 0.005 ? 'text-[#15803d]' : 'text-[#dc2626]'}`}>
+                                                        {formatMoney(isEditingSelectedEntry ? draftTotals.difference : selectedEntryTotals.difference)}
+                                                    </div>
+                                                </div>
+                                            </div>
                                         </div>
                                     </div>
-                                    {isEditingSelectedEntry && entryDraft ? (
-                                        <div className="flex flex-col gap-2 rounded-md border border-ld bg-muted/20 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-                                            <div className="flex flex-wrap gap-4">
-                                                <span>Debit {formatMoney(draftTotals.debit)}</span>
-                                                <span>Credit {formatMoney(draftTotals.credit)}</span>
-                                                <span className={isDraftBalanced ? 'text-green-700' : 'text-red-600'}>
-                                                    Difference {formatMoney(draftTotals.difference)}
-                                                </span>
-                                            </div>
-                                            <Button
-                                                type="button"
-                                                variant="outline"
-                                                className="h-8 rounded-full px-3"
-                                                onClick={addDraftLine}
-                                                disabled={isSavingEntry}
-                                            >
-                                                <Icon icon="mdi:plus" className="h-4 w-4" />
-                                                Add line
-                                            </Button>
-                                        </div>
-                                    ) : null}
-                                    <div className="overflow-x-auto rounded-md border border-ld">
+                                    <div className="overflow-x-auto">
                                         <Table>
                                             <THeader>
-                                                <TRow>
-                                                    <THead className="min-w-24 px-2">Type</THead>
-                                                    <THead className="min-w-28 px-2 text-right">Amount</THead>
-                                                    <THead className="min-w-48 px-2">Account</THead>
-                                                    {isEditingSelectedEntry ? (
-                                                        <>
-                                                            <THead className="min-w-48 px-2">Description</THead>
-                                                            <THead className="w-12 px-2 text-right">Action</THead>
-                                                        </>
-                                                    ) : null}
+                                                <TRow className="border-b border-[#dbe4f0] bg-white">
+                                                    <THead className="min-w-24 px-4 text-xs uppercase text-[#64748b]">Type</THead>
+                                                    <THead className="min-w-48 px-3 text-xs uppercase text-[#64748b]">Account</THead>
+                                                    <THead className="min-w-28 px-3 text-right text-xs uppercase text-[#64748b]">Debit</THead>
+                                                    <THead className="min-w-28 px-4 text-right text-xs uppercase text-[#64748b]">Credit</THead>
                                                 </TRow>
                                             </THeader>
                                             <TBody>
                                                 {isEditingSelectedEntry && entryDraft ? (
                                                     entryDraft.lines.map((line) => (
-                                                        <TRow key={line.client_id}>
-                                                            <TCell className="px-2 py-2 text-sm">
-                                                                <Select
-                                                                    value={line.line_type}
-                                                                    onValueChange={(value) => updateDraftLine(line.client_id, {
-                                                                        line_type: value === 'credit' ? 'credit' : 'debit',
-                                                                    })}
-                                                                    disabled={isSavingEntry}
-                                                                >
-                                                                    <SelectTrigger className="h-9 min-w-24">
-                                                                        <SelectValue />
-                                                                    </SelectTrigger>
-                                                                    <SelectContent>
-                                                                        <SelectItem value="debit">Debit</SelectItem>
-                                                                        <SelectItem value="credit">Credit</SelectItem>
-                                                                    </SelectContent>
-                                                                </Select>
+                                                        <TRow key={line.client_id} className="border-b border-[#e2e8f0] last:border-b-0 hover:bg-[#f8fafc]">
+                                                            <TCell className="px-4 py-3 text-sm">
+                                                                <div className="flex items-center gap-1">
+                                                                    <Select
+                                                                        value={line.line_type}
+                                                                        onValueChange={(value) => updateDraftLine(line.client_id, {
+                                                                            line_type: value === 'credit' ? 'credit' : 'debit',
+                                                                        })}
+                                                                        disabled={isSavingEntry}
+                                                                    >
+                                                                        <SelectTrigger className={`h-7 w-[72px] rounded-full border-0 px-2 text-xs font-medium shadow-none focus:ring-1 focus:ring-[#b7c7df] ${line.line_type === 'debit' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                                                                            <SelectValue />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent className="text-xs">
+                                                                            <SelectItem className="py-1 text-xs" value="debit">Debit</SelectItem>
+                                                                            <SelectItem className="py-1 text-xs" value="credit">Credit</SelectItem>
+                                                                        </SelectContent>
+                                                                    </Select>
+                                                                    <button
+                                                                        type="button"
+                                                                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#94a3b8] hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-40"
+                                                                        onClick={() => removeDraftLine(line.client_id)}
+                                                                        disabled={isSavingEntry || entryDraft.lines.length <= 1}
+                                                                        aria-label="Remove journal line"
+                                                                    >
+                                                                        <Icon icon="mdi:trash-can-outline" height={16} />
+                                                                    </button>
+                                                                </div>
                                                             </TCell>
-                                                            <TCell className="px-2 py-2">
-                                                                <Input
-                                                                    type="number"
-                                                                    step="0.01"
-                                                                    className="h-9 text-right font-mono tabular-nums"
-                                                                    value={line.amount}
-                                                                    onChange={(event) => updateDraftLine(line.client_id, { amount: event.target.value })}
-                                                                    disabled={isSavingEntry}
-                                                                />
-                                                            </TCell>
-                                                            <TCell className="px-2 py-2">
+                                                            <TCell className="px-3 py-3">
                                                                 <Select
                                                                     value={line.account_id || undefined}
                                                                     onValueChange={(value) => updateDraftLine(line.client_id, { account_id: value })}
                                                                     disabled={isSavingEntry}
                                                                 >
-                                                                    <SelectTrigger className="h-9 min-w-48">
+                                                                    <SelectTrigger className="h-8 min-w-48 border-0 bg-transparent px-0 text-sm font-medium text-[#172033] shadow-none focus:ring-1 focus:ring-[#b7c7df]">
                                                                         <SelectValue placeholder="Account" />
                                                                     </SelectTrigger>
-                                                                    <SelectContent>
+                                                                    <SelectContent className="text-xs">
                                                                         {accounts.map((account) => (
-                                                                            <SelectItem key={account.id} value={account.id}>
+                                                                            <SelectItem className="py-1 text-xs" key={account.id} value={account.id}>
                                                                                 {getAccountLabel(account)}
                                                                             </SelectItem>
                                                                         ))}
                                                                     </SelectContent>
                                                                 </Select>
                                                             </TCell>
-                                                            <TCell className="px-2 py-2">
-                                                                <Input
-                                                                    className="h-9"
-                                                                    value={line.description}
-                                                                    onChange={(event) => updateDraftLine(line.client_id, { description: event.target.value })}
-                                                                    disabled={isSavingEntry}
-                                                                />
+                                                            <TCell className="px-3 py-3 text-right">
+                                                                {line.line_type === 'debit' ? (
+                                                                    <Input
+                                                                        type="number"
+                                                                        step="0.01"
+                                                                        className="ml-auto h-8 w-[112px] border-0 bg-transparent px-0 text-right font-mono text-sm tabular-nums text-[#172033] shadow-none focus-visible:ring-1 focus-visible:ring-[#b7c7df]"
+                                                                        value={line.amount}
+                                                                        onChange={(event) => updateDraftLine(line.client_id, { amount: event.target.value })}
+                                                                        disabled={isSavingEntry}
+                                                                    />
+                                                                ) : (
+                                                                    <span className="font-mono text-sm tabular-nums text-[#94a3b8]">-</span>
+                                                                )}
                                                             </TCell>
-                                                            <TCell className="px-2 py-2 text-right">
-                                                                <button
-                                                                    type="button"
-                                                                    className="inline-flex h-9 w-9 items-center justify-center rounded-full hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-50"
-                                                                    onClick={() => removeDraftLine(line.client_id)}
-                                                                    disabled={isSavingEntry || entryDraft.lines.length <= 1}
-                                                                    aria-label="Remove journal line"
-                                                                >
-                                                                    <Icon icon="mdi:trash-can-outline" height={18} />
-                                                                </button>
+                                                            <TCell className="px-4 py-3 text-right">
+                                                                {line.line_type === 'credit' ? (
+                                                                    <Input
+                                                                        type="number"
+                                                                        step="0.01"
+                                                                        className="ml-auto h-8 w-[112px] border-0 bg-transparent px-0 text-right font-mono text-sm tabular-nums text-[#172033] shadow-none focus-visible:ring-1 focus-visible:ring-[#b7c7df]"
+                                                                        value={line.amount}
+                                                                        onChange={(event) => updateDraftLine(line.client_id, { amount: event.target.value })}
+                                                                        disabled={isSavingEntry}
+                                                                    />
+                                                                ) : (
+                                                                    <span className="font-mono text-sm tabular-nums text-[#94a3b8]">-</span>
+                                                                )}
                                                             </TCell>
                                                         </TRow>
                                                     ))
                                                 ) : (
-                                                    (selectedEntry.lines ?? []).map((line, index) => (
-                                                        <TRow key={line.id ?? `${selectedEntry.id}-${index}`}>
-                                                            <TCell className="px-2 py-2 text-sm">{line.line_type || '-'}</TCell>
-                                                            <TCell className="px-2 py-2 text-right text-sm font-mono tabular-nums">
-                                                                {formatMoney(line.amount ?? 0)}
-                                                            </TCell>
-                                                            <TCell className="px-2 py-2 text-sm">
-                                                                {getLineAccountLabel(line, accountLabelById)}
-                                                            </TCell>
-                                                        </TRow>
-                                                    ))
+                                                    (selectedEntry.lines ?? []).map((line, index) => {
+                                                        const lineType = String(line.line_type ?? '').toLowerCase();
+                                                        const amount = formatMoney(line.amount ?? 0);
+
+                                                        return (
+                                                            <TRow
+                                                                key={line.id ?? `${selectedEntry.id}-${index}`}
+                                                                className="border-b border-[#e2e8f0] last:border-b-0 hover:bg-[#f8fafc]"
+                                                            >
+                                                                <TCell className="px-4 py-3 text-sm">
+                                                                    <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${lineType === 'debit' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                                                                        {line.line_type || '-'}
+                                                                    </span>
+                                                                </TCell>
+                                                                <TCell className="px-3 py-3 text-sm font-medium text-[#172033]">
+                                                                    {getLineAccountLabel(line, accountLabelById)}
+                                                                </TCell>
+                                                                <TCell className="px-3 py-3 text-right text-sm font-mono tabular-nums text-[#172033]">
+                                                                    {lineType === 'debit' ? amount : '-'}
+                                                                </TCell>
+                                                                <TCell className="px-4 py-3 text-right text-sm font-mono tabular-nums text-[#172033]">
+                                                                    {lineType === 'credit' ? amount : '-'}
+                                                                </TCell>
+                                                            </TRow>
+                                                        );
+                                                    })
                                                 )}
                                                 {(!isEditingSelectedEntry && (selectedEntry.lines ?? []).length === 0) ||
                                                 (isEditingSelectedEntry && entryDraft && entryDraft.lines.length === 0) ? (
                                                     <TRow>
-                                                        <TCell className="px-2 py-3 text-sm text-muted-foreground" colSpan={isEditingSelectedEntry ? 5 : 3}>
+                                                        <TCell className="px-4 py-4 text-sm text-[#64748b]" colSpan={4}>
                                                             No lines found.
+                                                        </TCell>
+                                                    </TRow>
+                                                ) : null}
+                                                {isEditingSelectedEntry && entryDraft ? (
+                                                    <TRow className="border-t border-[#dbe4f0] bg-[#f8fafc]">
+                                                        <TCell className="px-4 py-2" colSpan={4}>
+                                                            <div className="flex flex-col gap-2 text-xs sm:flex-row sm:items-center sm:justify-between">
+                                                                <span className={isDraftBalanced ? 'text-[#15803d]' : 'text-[#dc2626]'}>
+                                                                    {isDraftBalanced ? 'Entry is balanced.' : 'Debit and credit totals must match before saving.'}
+                                                                </span>
+                                                                <Button
+                                                                    type="button"
+                                                                    variant="outline"
+                                                                    className="h-7 rounded-full border-[#b7c7df] px-3 text-xs text-[#1f3a67]"
+                                                                    onClick={addDraftLine}
+                                                                    disabled={isSavingEntry}
+                                                                >
+                                                                    <Icon icon="mdi:plus" className="h-3.5 w-3.5" />
+                                                                    Add line
+                                                                </Button>
+                                                            </div>
                                                         </TCell>
                                                     </TRow>
                                                 ) : null}
