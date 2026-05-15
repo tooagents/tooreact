@@ -786,10 +786,14 @@ const Inbox = () => {
                                 ) : null}
                             </div>
                         </CardHeader>
-                        <CardContent className="min-h-[220px] border-t border-[#d8c6a1] p-0" style={ledgerPaperStyle}>
+                        <CardContent className="p-4 pt-0 flex flex-col gap-3">
                             {selectedEntry ? (
-                                <div className="flex flex-col">
-                                    <div className="border-b border-[#d8c6a1] bg-[#fdf8ec]/70 p-4">
+                                <Card
+                                    className="shadow-none border-[#d8c6a1] rounded-md overflow-hidden"
+                                    style={ledgerPaperStyle}
+                                >
+                                    <CardContent className="p-4 flex flex-col gap-3">
+                                        <div>
                                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                                             {isEditingSelectedEntry && entryDraft ? (
                                                 <div className="min-w-0">
@@ -856,7 +860,7 @@ const Inbox = () => {
                                             </div>
                                         </div>
                                     </div>
-                                    <div className="overflow-x-auto">
+                                        <div className="overflow-x-auto border rounded-md border-[#9eb8dc]/70 bg-[#fdf8ec]/70">
                                         <Table>
                                             <THeader>
                                                 <TRow className="border-b border-[#6fa0d8]/60 bg-[#fdf8ec]/70">
@@ -1005,8 +1009,9 @@ const Inbox = () => {
                                                 ) : null}
                                             </TBody>
                                         </Table>
-                                    </div>
-                                </div>
+                                        </div>
+                                    </CardContent>
+                                </Card>
                             ) : (
                                 <div className="flex min-h-[180px] items-center justify-center text-sm font-medium text-muted-foreground">
                                     Select an inbox transaction.
