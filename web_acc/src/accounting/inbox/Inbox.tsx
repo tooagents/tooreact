@@ -806,7 +806,7 @@ const Inbox = () => {
                                                         </Badge>
                                                     </div>
                                                     <Input
-                                                        className="mt-1.5 h-7 max-w-full border-[#d8c6a1] bg-[#fdf8ec] px-2 text-sm font-semibold text-[#172033]"
+                                                        className="mt-1.5 h-7 w-full max-w-[360px] border-[#b7c7df] bg-[#fdf8ec] px-2 text-sm font-semibold text-[#172033] shadow-none sm:max-w-[420px]"
                                                         value={entryDraft.memo}
                                                         onChange={(event) => updateDraftHeader('memo', event.target.value)}
                                                         placeholder="Memo"
@@ -814,7 +814,7 @@ const Inbox = () => {
                                                     />
                                                     <Input
                                                         type="date"
-                                                        className="mt-1 h-7 w-[135px] border-[#d8c6a1] bg-[#fdf8ec] px-2 text-xs text-[#506080]"
+                                                        className="mt-1 h-7 w-[135px] border-[#b7c7df] bg-[#fdf8ec] px-2 text-xs text-[#506080] shadow-none"
                                                         value={entryDraft.entry_date}
                                                         onChange={(event) => updateDraftHeader('entry_date', event.target.value)}
                                                         disabled={isSavingEntry}
@@ -830,10 +830,10 @@ const Inbox = () => {
                                                             {getDisplayStatus(selectedEntry)}
                                                         </Badge>
                                                     </div>
-                                                    <div className="mt-2 text-sm font-semibold text-[#172033]">
-                                                        {selectedEntry.memo || 'No memo'}
+                                                    <div className="mt-1.5 flex h-7 w-full max-w-[360px] items-center rounded-md border border-transparent px-2 text-sm font-semibold text-[#172033] sm:max-w-[420px]">
+                                                        <span className="truncate">{selectedEntry.memo || 'No memo'}</span>
                                                     </div>
-                                                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#506080]">
+                                                    <div className="mt-1 flex h-7 w-[135px] items-center rounded-md border border-transparent px-2 text-xs text-[#506080]">
                                                         <span>{selectedEntry.entry_date || '-'}</span>
                                                     </div>
                                                 </div>
