@@ -885,9 +885,21 @@ const Inbox = () => {
                                                         return (
                                                             <TRow key={line.client_id} className="border-b border-[#e2e8f0] last:border-b-0 hover:bg-[#f8fafc]">
                                                                 <TCell className="px-4 py-3 text-sm">
-                                                                    <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${lineType === 'debit' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                                                                        {line.line_type || '-'}
-                                                                    </span>
+                                                                    <Select
+                                                                        value={line.line_type}
+                                                                        onValueChange={(value) => updateDraftLine(line.client_id, {
+                                                                            line_type: value === 'credit' ? 'credit' : 'debit',
+                                                                        })}
+                                                                        disabled={isSavingEntry}
+                                                                    >
+                                                                        <SelectTrigger className={`h-7 w-[82px] rounded-full border border-transparent bg-transparent px-2 text-xs font-medium shadow-none focus-visible:border-[#b7c7df] focus-visible:ring-1 focus-visible:ring-[#b7c7df] ${lineType === 'debit' ? 'text-blue-700' : 'text-emerald-700'}`}>
+                                                                            <SelectValue />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent className="text-xs">
+                                                                            <SelectItem className="py-1 text-xs" value="debit">Debit</SelectItem>
+                                                                            <SelectItem className="py-1 text-xs" value="credit">Credit</SelectItem>
+                                                                        </SelectContent>
+                                                                    </Select>
                                                                 </TCell>
                                                                 <TCell className="px-3 py-3 text-sm font-medium text-[#172033]">
                                                                     <Select
