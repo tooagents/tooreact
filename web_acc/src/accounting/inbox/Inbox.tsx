@@ -3,6 +3,7 @@ import { Icon } from '@iconify/react/dist/iconify.js';
 import { Badge } from 'src/components/ui/badge';
 import { Button } from 'src/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from 'src/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from 'src/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from 'src/components/ui/dropdown-menu';
 import { Input } from 'src/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'src/components/ui/select';
@@ -145,13 +146,13 @@ const getEntryLabel = (entry: JournalEntryRow) => {
 };
 
 const getDisplayStatus = (entry: JournalEntryRow) => {
-    const status = String(entry.status ?? '').trim();
+    const status = String(entry.entry_status ?? entry.status ?? '').trim();
     if (status) return status;
     const period = String(entry.period_yyyymm ?? '').trim();
     return period || 'entry';
 };
 
-const getEntryStatus = (entry: JournalEntryRow) => String(entry.status ?? '').trim() || '-';
+const getEntryStatus = (entry: JournalEntryRow) => String(entry.entry_status ?? entry.status ?? '').trim() || '-';
 
 const toDraft = (entry: JournalEntryRow): JournalEntryDraft => ({
     entry_date: String(entry.entry_date ?? ''),
@@ -210,6 +211,8 @@ const Inbox = () => {
     const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
     const [entryDraft, setEntryDraft] = useState<JournalEntryDraft | null>(null);
     const [isSavingEntry, setIsSavingEntry] = useState(false);
+    const [entryToDelete, setEntryToDelete] = useState<JournalEntryRow | null>(null);
+    const [isDeletingEntry, setIsDeletingEntry] = useState(false);
     const [loading, setLoading] = useState(false);
     const [msg, setMsg] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -517,8 +520,70 @@ const Inbox = () => {
         }
     };
 
+    const confirmDeleteEntry = async () => {
+        if (!entryToDelete || isDeletingEntry) return;
+
+        setIsDeletingEntry(true);
+        setError(null);
+        setMsg(null);
+        try {
+            await jeAPI.deleteEntry(entryToDelete.id);
+            setEntries((current) => {
+                const nextEntries = current.filter((entry) => entry.id !== entryToDelete.id);
+                setSelectedEntryId((currentId) => currentId === entryToDelete.id
+                    ? nextEntries[0]?.id ?? null
+                    : currentId,
+                );
+                return nextEntries;
+            });
+            if (editingEntryId === entryToDelete.id) {
+                setEditingEntryId(null);
+                setEntryDraft(null);
+            }
+            setEntryToDelete(null);
+            setMsg('Inbox transaction deleted.');
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to delete inbox transaction.');
+        } finally {
+            setIsDeletingEntry(false);
+        }
+    };
+
     return (
         <>
+            <Dialog
+                open={Boolean(entryToDelete)}
+                onOpenChange={(open) => {
+                    if (!open && !isDeletingEntry) setEntryToDelete(null);
+                }}
+            >
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Delete transaction?</DialogTitle>
+                        <DialogDescription>
+                            Delete transaction will also delete related the JE linked with this. Confirm to continue.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter className="flex gap-2">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setEntryToDelete(null)}
+                            disabled={isDeletingEntry}
+                        >
+                            Cancel
+                        </Button>
+                        <Button
+                            type="button"
+                            className="bg-red-600 text-white hover:bg-red-700"
+                            onClick={confirmDeleteEntry}
+                            disabled={isDeletingEntry}
+                        >
+                            {isDeletingEntry ? 'Deleting...' : 'Confirm delete'}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
             <div className="flex gap-6 flex-col">
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                     <div>
@@ -711,6 +776,7 @@ const Inbox = () => {
                                                                     className="flex items-center gap-2 text-red-600 focus:text-red-600"
                                                                     onClick={(event) => {
                                                                         event.stopPropagation();
+                                                                        setEntryToDelete(entry);
                                                                     }}
                                                                 >
                                                                     <Icon icon="solar:trash-bin-minimalistic-outline" height={16} />

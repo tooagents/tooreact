@@ -39,6 +39,7 @@ export type JournalEntryRow = {
     posted_at?: string | null;
     is_reversal?: boolean | null;
     lines?: JournalEntryLine[];
+    entry_status?: string | null;
     status?: string | null;
     [key: string]: unknown;
 };
@@ -126,5 +127,18 @@ export const jeAPI = {
             body: JSON.stringify(payload),
         });
         return parseApiResponse<JournalEntryRow>(response, 'Failed to update journal entry');
+    },
+
+    async deleteEntry(journalEntryId: string): Promise<void> {
+        const response = await apiFetch(`/acc/je/${encodeURIComponent(journalEntryId)}`, {
+            method: 'DELETE',
+        });
+
+        if (!response.ok) {
+            const details = await response.text().catch(() => '');
+            throw new Error(
+                `Failed to delete journal entry: ${response.status} ${response.statusText}${details ? ` - ${details}` : ''}`,
+            );
+        }
     },
 };

@@ -58,12 +58,12 @@ const SidebarContent: MenuItem[] = [
                 url: '/app/acc/inbox',
             },
 
-            {
-                name: 'Entries',
-                icon: 'solar:inbox-linear',
-                id: uniqueId(),
-                url: '/app/acc/je',
-            },
+            // {
+            //     name: 'Entries',
+            //     icon: 'solar:inbox-linear',
+            //     id: uniqueId(),
+            //     url: '/app/acc/je',
+            // },
 
             {
                 name: 'Ledger',
