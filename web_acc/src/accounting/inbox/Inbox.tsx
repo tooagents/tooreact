@@ -871,10 +871,10 @@ const Inbox = () => {
                                         <Table>
                                             <THeader>
                                                 <TRow className="border-b border-[#6fa0d8]/60 bg-[#fdf8ec]/70">
-                                                    <THead className="min-w-24 px-4 text-xs uppercase text-[#1f3a67]">Type</THead>
-                                                    <THead className="min-w-48 px-3 text-xs uppercase text-[#1f3a67]">Account</THead>
-                                                    <THead className="min-w-28 px-3 text-right text-xs uppercase text-[#1f3a67]">Debit</THead>
-                                                    <THead className="min-w-28 px-4 text-right text-xs uppercase text-[#1f3a67]">Credit</THead>
+                                                    <THead className="w-[112px] min-w-[112px] px-2 text-xs uppercase text-[#1f3a67]">Type</THead>
+                                                    <THead className="min-w-48 px-2 text-xs uppercase text-[#1f3a67]">Account</THead>
+                                                    <THead className="w-24 min-w-24 px-2 text-right text-xs uppercase text-[#1f3a67]">Debit</THead>
+                                                    <THead className="w-24 min-w-24 px-2 text-right text-xs uppercase text-[#1f3a67]">Credit</THead>
                                                 </TRow>
                                             </THeader>
                                             <TBody>
@@ -884,8 +884,8 @@ const Inbox = () => {
 
                                                         return (
                                                             <TRow key={line.client_id} className="border-b border-[#e2e8f0] last:border-b-0 hover:bg-[#f8fafc]">
-                                                                <TCell className="px-4 py-3 text-sm">
-                                                                    <div className="flex h-7 items-center gap-1 whitespace-nowrap">
+                                                                <TCell className="w-[112px] px-2 py-3 text-sm">
+                                                                    <div className="flex h-7 w-[96px] items-center whitespace-nowrap">
                                                                         <Select
                                                                             value={line.line_type}
                                                                             onValueChange={(value) => updateDraftLine(line.client_id, {
@@ -893,7 +893,7 @@ const Inbox = () => {
                                                                             })}
                                                                             disabled={isSavingEntry}
                                                                         >
-                                                                            <SelectTrigger className={`h-7 w-[82px] rounded-full border border-transparent bg-transparent px-2 text-xs font-medium shadow-none focus-visible:border-[#b7c7df] focus-visible:ring-1 focus-visible:ring-[#b7c7df] ${lineType === 'debit' ? 'text-blue-700' : 'text-emerald-700'}`}>
+                                                                            <SelectTrigger className={`h-7 w-[72px] gap-1 rounded-full border border-transparent bg-transparent pl-0 pr-1 text-xs font-medium shadow-none focus-visible:border-[#b7c7df] focus-visible:ring-1 focus-visible:ring-[#b7c7df] [&_svg]:size-3 ${lineType === 'debit' ? 'text-blue-700' : 'text-emerald-700'}`}>
                                                                                 <SelectValue />
                                                                             </SelectTrigger>
                                                                             <SelectContent className="text-xs">
@@ -903,7 +903,7 @@ const Inbox = () => {
                                                                         </Select>
                                                                         <button
                                                                             type="button"
-                                                                            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#94a3b8] hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-40"
+                                                                            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#94a3b8] hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-40"
                                                                             onClick={() => removeDraftLine(line.client_id)}
                                                                             disabled={isSavingEntry || entryDraft.lines.length <= 1}
                                                                             aria-label="Remove journal line"
@@ -912,13 +912,13 @@ const Inbox = () => {
                                                                         </button>
                                                                     </div>
                                                                 </TCell>
-                                                                <TCell className="px-3 py-3 text-sm font-medium text-[#172033]">
+                                                                <TCell className="px-2 py-3 text-xs font-medium text-[#172033]">
                                                                     <Select
                                                                         value={line.account_id || undefined}
                                                                         onValueChange={(value) => updateDraftLine(line.client_id, { account_id: value })}
                                                                         disabled={isSavingEntry}
                                                                     >
-                                                                        <SelectTrigger className="h-7 min-w-[220px] rounded-md border border-transparent bg-transparent px-2 text-sm font-medium text-[#172033] shadow-none focus-visible:border-[#b7c7df] focus-visible:ring-1 focus-visible:ring-[#b7c7df]">
+                                                                        <SelectTrigger className="h-7 min-w-[220px] rounded-md border border-transparent bg-transparent pl-0 pr-2 text-xs font-medium text-[#172033] shadow-none focus-visible:border-[#b7c7df] focus-visible:ring-1 focus-visible:ring-[#b7c7df]">
                                                                             <SelectValue placeholder={getLineAccountLabel(line, accountLabelById) || 'Account'} />
                                                                         </SelectTrigger>
                                                                         <SelectContent className="text-xs">
@@ -930,12 +930,12 @@ const Inbox = () => {
                                                                         </SelectContent>
                                                                     </Select>
                                                                 </TCell>
-                                                                <TCell className="px-3 py-3 text-right">
+                                                                <TCell className="w-24 px-2 py-3 text-right">
                                                                     {lineType === 'debit' ? (
                                                                         <Input
-                                                                            type="number"
-                                                                            step="0.01"
-                                                                            className="ml-auto h-7 w-[112px] rounded-md border border-transparent bg-transparent px-0 text-right font-mono text-sm tabular-nums text-[#172033] shadow-none focus-visible:border-[#b7c7df] focus-visible:ring-1 focus-visible:ring-[#b7c7df]"
+                                                                            type="text"
+                                                                            inputMode="decimal"
+                                                                            className="ml-auto h-7 w-[92px] rounded-md border border-transparent bg-transparent px-0 text-right font-mono text-sm tabular-nums text-[#172033] shadow-none focus-visible:border-[#b7c7df] focus-visible:ring-1 focus-visible:ring-[#b7c7df]"
                                                                             style={{ textAlign: 'right' }}
                                                                             value={line.amount}
                                                                             onChange={(event) => updateDraftLine(line.client_id, { amount: event.target.value })}
@@ -945,12 +945,12 @@ const Inbox = () => {
                                                                         <span className="font-mono text-sm tabular-nums text-[#94a3b8]">-</span>
                                                                     )}
                                                                 </TCell>
-                                                                <TCell className="px-4 py-3 text-right">
+                                                                <TCell className="w-24 px-2 py-3 text-right">
                                                                     {lineType === 'credit' ? (
                                                                         <Input
-                                                                            type="number"
-                                                                            step="0.01"
-                                                                            className="ml-auto h-7 w-[112px] rounded-md border border-transparent bg-transparent px-0 text-right font-mono text-sm tabular-nums text-[#172033] shadow-none focus-visible:border-[#b7c7df] focus-visible:ring-1 focus-visible:ring-[#b7c7df]"
+                                                                            type="text"
+                                                                            inputMode="decimal"
+                                                                            className="ml-auto h-7 w-[92px] rounded-md border border-transparent bg-transparent px-0 text-right font-mono text-sm tabular-nums text-[#172033] shadow-none focus-visible:border-[#b7c7df] focus-visible:ring-1 focus-visible:ring-[#b7c7df]"
                                                                             style={{ textAlign: 'right' }}
                                                                             value={line.amount}
                                                                             onChange={(event) => updateDraftLine(line.client_id, { amount: event.target.value })}
@@ -973,20 +973,20 @@ const Inbox = () => {
                                                                 key={line.id ?? `${selectedEntry.id}-${index}`}
                                                                 className="border-b border-[#e2e8f0] last:border-b-0 hover:bg-[#f8fafc]"
                                                             >
-                                                                <TCell className="px-4 py-3 text-sm">
-                                                                    <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${lineType === 'debit' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                                                                <TCell className="w-[112px] px-2 py-3 text-sm">
+                                                                    <span className={`inline-flex rounded-full py-1 pr-2 text-xs font-medium ${lineType === 'debit' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}`}>
                                                                         {line.line_type || '-'}
                                                                     </span>
                                                                 </TCell>
-                                                                <TCell className="px-3 py-3 text-sm font-medium text-[#172033]">
+                                                                <TCell className="px-2 py-3 text-xs font-medium text-[#172033]">
                                                                     {getLineAccountLabel(line, accountLabelById)}
                                                                 </TCell>
-                                                                <TCell className="px-3 py-3 text-right">
+                                                                <TCell className="w-24 px-2 py-3 text-right">
                                                                     {lineType === 'debit' ? (
                                                                         <Input
                                                                             readOnly
                                                                             tabIndex={-1}
-                                                                            className="ml-auto h-7 w-[112px] rounded-md border border-transparent bg-transparent px-0 text-right font-mono text-sm tabular-nums text-[#172033] shadow-none focus-visible:ring-0"
+                                                                            className="ml-auto h-7 w-[92px] rounded-md border border-transparent bg-transparent px-0 text-right font-mono text-sm tabular-nums text-[#172033] shadow-none focus-visible:ring-0"
                                                                             style={{ textAlign: 'right' }}
                                                                             value={amount}
                                                                         />
@@ -994,12 +994,12 @@ const Inbox = () => {
                                                                         <span className="font-mono text-sm tabular-nums text-[#94a3b8]">-</span>
                                                                     )}
                                                                 </TCell>
-                                                                <TCell className="px-4 py-3 text-right">
+                                                                <TCell className="w-24 px-2 py-3 text-right">
                                                                     {lineType === 'credit' ? (
                                                                         <Input
                                                                             readOnly
                                                                             tabIndex={-1}
-                                                                            className="ml-auto h-7 w-[112px] rounded-md border border-transparent bg-transparent px-0 text-right font-mono text-sm tabular-nums text-[#172033] shadow-none focus-visible:ring-0"
+                                                                            className="ml-auto h-7 w-[92px] rounded-md border border-transparent bg-transparent px-0 text-right font-mono text-sm tabular-nums text-[#172033] shadow-none focus-visible:ring-0"
                                                                             style={{ textAlign: 'right' }}
                                                                             value={amount}
                                                                         />
