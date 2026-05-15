@@ -283,29 +283,6 @@ const Entries = () => {
         <>
             <BreadcrumbComp title="Entries" items={BCrumb} leftContent={null} rightContent={headBoxes} />
             <div className="flex gap-6 flex-col">
-                <Card className="shadow-none border-secondary/20">
-                    <CardContent className="p-4 flex flex-col gap-3">
-                        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-                            <div className="text-sm text-muted-foreground">
-                                Journal entries are loaded directly from the ledger.
-                            </div>
-                            <Button
-                                className="h-9 px-5 rounded-full shadow-sm"
-                                onClick={refresh}
-                                disabled={isLoading}
-                            >
-                                {isLoading ? (
-                                    <LoadingSpinner size="sm" variant="dots" />
-                                ) : (
-                                    <Icon icon="mdi:refresh" className="h-4 w-4" />
-                                )}
-                                {isLoading ? 'Refreshing...' : 'Refresh Entries'}
-                            </Button>
-                        </div>
-                        {msg ? <p className="text-sm text-muted-foreground">{msg}</p> : null}
-                        {error ? <p className="text-sm text-red-600">Error: {error}</p> : null}
-                    </CardContent>
-                </Card>
 
                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
                     <Card className="shadow-none border-[#d8c6a1] bg-[#f8f1de]">
