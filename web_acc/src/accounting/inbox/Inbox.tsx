@@ -885,21 +885,32 @@ const Inbox = () => {
                                                         return (
                                                             <TRow key={line.client_id} className="border-b border-[#e2e8f0] last:border-b-0 hover:bg-[#f8fafc]">
                                                                 <TCell className="px-4 py-3 text-sm">
-                                                                    <Select
-                                                                        value={line.line_type}
-                                                                        onValueChange={(value) => updateDraftLine(line.client_id, {
-                                                                            line_type: value === 'credit' ? 'credit' : 'debit',
-                                                                        })}
-                                                                        disabled={isSavingEntry}
-                                                                    >
-                                                                        <SelectTrigger className={`h-7 w-[82px] rounded-full border border-transparent bg-transparent px-2 text-xs font-medium shadow-none focus-visible:border-[#b7c7df] focus-visible:ring-1 focus-visible:ring-[#b7c7df] ${lineType === 'debit' ? 'text-blue-700' : 'text-emerald-700'}`}>
-                                                                            <SelectValue />
-                                                                        </SelectTrigger>
-                                                                        <SelectContent className="text-xs">
-                                                                            <SelectItem className="py-1 text-xs" value="debit">Debit</SelectItem>
-                                                                            <SelectItem className="py-1 text-xs" value="credit">Credit</SelectItem>
-                                                                        </SelectContent>
-                                                                    </Select>
+                                                                    <div className="flex h-7 items-center gap-1 whitespace-nowrap">
+                                                                        <Select
+                                                                            value={line.line_type}
+                                                                            onValueChange={(value) => updateDraftLine(line.client_id, {
+                                                                                line_type: value === 'credit' ? 'credit' : 'debit',
+                                                                            })}
+                                                                            disabled={isSavingEntry}
+                                                                        >
+                                                                            <SelectTrigger className={`h-7 w-[82px] rounded-full border border-transparent bg-transparent px-2 text-xs font-medium shadow-none focus-visible:border-[#b7c7df] focus-visible:ring-1 focus-visible:ring-[#b7c7df] ${lineType === 'debit' ? 'text-blue-700' : 'text-emerald-700'}`}>
+                                                                                <SelectValue />
+                                                                            </SelectTrigger>
+                                                                            <SelectContent className="text-xs">
+                                                                                <SelectItem className="py-1 text-xs" value="debit">Debit</SelectItem>
+                                                                                <SelectItem className="py-1 text-xs" value="credit">Credit</SelectItem>
+                                                                            </SelectContent>
+                                                                        </Select>
+                                                                        <button
+                                                                            type="button"
+                                                                            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#94a3b8] hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-40"
+                                                                            onClick={() => removeDraftLine(line.client_id)}
+                                                                            disabled={isSavingEntry || entryDraft.lines.length <= 1}
+                                                                            aria-label="Remove journal line"
+                                                                        >
+                                                                            <Icon icon="mdi:trash-can-outline" height={16} />
+                                                                        </button>
+                                                                    </div>
                                                                 </TCell>
                                                                 <TCell className="px-3 py-3 text-sm font-medium text-[#172033]">
                                                                     <Select
