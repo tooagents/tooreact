@@ -878,15 +878,53 @@ const Inbox = () => {
 
                                                         return (
                                                             <TRow key={line.client_id} className="border-b border-[#e2e8f0] last:border-b-0 hover:bg-[#f8fafc]">
-                                                                <TCell className="px-4 py-3 text-sm">
-                                                                    <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${lineType === 'debit' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                                                                        {line.line_type || '-'}
-                                                                    </span>
+                                                                <TCell className="px-4 py-3 text-sm align-middle">
+                                                                    <div className="flex items-center gap-1 whitespace-nowrap">
+                                                                        <Select
+                                                                            value={line.line_type}
+                                                                            onValueChange={(value) => updateDraftLine(line.client_id, {
+                                                                                line_type: value === 'credit' ? 'credit' : 'debit',
+                                                                            })}
+                                                                            disabled={isSavingEntry}
+                                                                        >
+                                                                            <SelectTrigger className={`h-7 w-[72px] rounded-full border border-transparent bg-transparent px-2 text-xs font-medium shadow-none focus-visible:border-[#b7c7df] focus-visible:ring-1 focus-visible:ring-[#b7c7df] ${lineType === 'debit' ? 'text-blue-700' : 'text-emerald-700'}`}>
+                                                                                <SelectValue />
+                                                                            </SelectTrigger>
+                                                                            <SelectContent className="text-xs">
+                                                                                <SelectItem className="py-1 text-xs" value="debit">Debit</SelectItem>
+                                                                                <SelectItem className="py-1 text-xs" value="credit">Credit</SelectItem>
+                                                                            </SelectContent>
+                                                                        </Select>
+                                                                        <button
+                                                                            type="button"
+                                                                            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#94a3b8] hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-40"
+                                                                            onClick={() => removeDraftLine(line.client_id)}
+                                                                            disabled={isSavingEntry || entryDraft.lines.length <= 1}
+                                                                            aria-label="Remove journal line"
+                                                                        >
+                                                                            <Icon icon="mdi:trash-can-outline" height={16} />
+                                                                        </button>
+                                                                    </div>
                                                                 </TCell>
-                                                                <TCell className="px-3 py-3 text-sm font-medium text-[#172033]">
-                                                                    {getLineAccountLabel(line, accountLabelById)}
+                                                                <TCell className="px-3 py-3 text-sm font-medium text-[#172033] align-middle">
+                                                                    <Select
+                                                                        value={line.account_id || undefined}
+                                                                        onValueChange={(value) => updateDraftLine(line.client_id, { account_id: value })}
+                                                                        disabled={isSavingEntry}
+                                                                    >
+                                                                        <SelectTrigger className="h-7 min-w-[220px] rounded-md border border-transparent bg-transparent px-2 text-sm font-medium text-[#172033] shadow-none focus-visible:border-[#b7c7df] focus-visible:ring-1 focus-visible:ring-[#b7c7df]">
+                                                                            <SelectValue placeholder={getLineAccountLabel(line, accountLabelById) || 'Account'} />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent className="text-xs">
+                                                                            {accounts.map((account) => (
+                                                                                <SelectItem className="py-1 text-xs" key={account.id} value={account.id}>
+                                                                                    {getAccountLabel(account)}
+                                                                                </SelectItem>
+                                                                            ))}
+                                                                        </SelectContent>
+                                                                    </Select>
                                                                 </TCell>
-                                                                <TCell className="px-3 py-3 text-right">
+                                                                <TCell className="px-3 py-3 text-right align-middle">
                                                                     {lineType === 'debit' ? (
                                                                         <Input
                                                                             type="number"
@@ -900,7 +938,7 @@ const Inbox = () => {
                                                                         <span className="font-mono text-sm tabular-nums text-[#94a3b8]">-</span>
                                                                     )}
                                                                 </TCell>
-                                                                <TCell className="px-4 py-3 text-right text-sm font-mono tabular-nums text-[#172033]">
+                                                                <TCell className="px-4 py-3 text-right text-sm font-mono tabular-nums text-[#172033] align-middle">
                                                                     {lineType === 'credit' ? amount : '-'}
                                                                 </TCell>
                                                             </TRow>
@@ -916,27 +954,49 @@ const Inbox = () => {
                                                                 key={line.id ?? `${selectedEntry.id}-${index}`}
                                                                 className="border-b border-[#e2e8f0] last:border-b-0 hover:bg-[#f8fafc]"
                                                             >
-                                                                <TCell className="px-4 py-3 text-sm">
-                                                                    <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${lineType === 'debit' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                                                                        {line.line_type || '-'}
-                                                                    </span>
+                                                                <TCell className="px-4 py-3 text-sm align-middle">
+                                                                    <div className="flex items-center gap-1 whitespace-nowrap">
+                                                                        <Select value={line.line_type || undefined} disabled>
+                                                                            <SelectTrigger className={`h-7 w-[72px] rounded-full border border-transparent bg-transparent px-2 text-xs font-medium shadow-none focus-visible:ring-0 ${lineType === 'debit' ? 'text-blue-700' : 'text-emerald-700'}`}>
+                                                                                <SelectValue value={line.line_type || undefined} placeholder={line.line_type || '-'} />
+                                                                            </SelectTrigger>
+                                                                            <SelectContent className="text-xs">
+                                                                                <SelectItem className="py-1 text-xs" value="debit">Debit</SelectItem>
+                                                                                <SelectItem className="py-1 text-xs" value="credit">Credit</SelectItem>
+                                                                            </SelectContent>
+                                                                        </Select>
+                                                                        <button
+                                                                            type="button"
+                                                                            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#94a3b8] opacity-0"
+                                                                            aria-hidden="true"
+                                                                        >
+                                                                            <Icon icon="mdi:trash-can-outline" height={16} />
+                                                                        </button>
+                                                                    </div>
                                                                 </TCell>
-                                                                <TCell className="px-3 py-3 text-sm font-medium text-[#172033]">
-                                                                    {getLineAccountLabel(line, accountLabelById)}
+                                                                <TCell className="px-3 py-3 text-sm font-medium text-[#172033] align-middle">
+                                                                    <Select value={line.account_id || undefined} disabled>
+                                                                        <SelectTrigger className="h-7 min-w-[220px] rounded-md border border-transparent bg-transparent px-2 text-sm font-medium text-[#172033] shadow-none focus-visible:ring-0">
+                                                                            <SelectValue value={line.account_id || undefined} placeholder={getLineAccountLabel(line, accountLabelById) || 'Account'} />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent className="text-xs">
+                                                                            {accounts.map((account) => (
+                                                                                <SelectItem className="py-1 text-xs" key={account.id} value={account.id}>
+                                                                                    {getAccountLabel(account)}
+                                                                                </SelectItem>
+                                                                            ))}
+                                                                        </SelectContent>
+                                                                    </Select>
                                                                 </TCell>
-                                                                <TCell className="px-3 py-3 text-right">
-                                                                    {lineType === 'debit' ? (
-                                                                        <Input
-                                                                            readOnly
-                                                                            tabIndex={-1}
-                                                                            className="ml-auto h-7 w-[112px] rounded-md border border-transparent bg-transparent px-0 text-right font-mono text-sm tabular-nums text-[#172033] shadow-none focus-visible:ring-0"
-                                                                            value={amount}
-                                                                        />
-                                                                    ) : (
-                                                                        <span className="font-mono text-sm tabular-nums text-[#94a3b8]">-</span>
-                                                                    )}
+                                                                <TCell className="px-3 py-3 text-right align-middle">
+                                                                    <Input
+                                                                        readOnly
+                                                                        tabIndex={-1}
+                                                                        className="ml-auto h-7 w-[112px] rounded-md border border-transparent bg-transparent px-0 text-right font-mono text-sm tabular-nums text-[#172033] shadow-none focus-visible:ring-0"
+                                                                        value={lineType === 'debit' ? amount : '-'}
+                                                                    />
                                                                 </TCell>
-                                                                <TCell className="px-4 py-3 text-right text-sm font-mono tabular-nums text-[#172033]">
+                                                                <TCell className="px-4 py-3 text-right text-sm font-mono tabular-nums text-[#172033] align-middle">
                                                                     {lineType === 'credit' ? amount : '-'}
                                                                 </TCell>
                                                             </TRow>
