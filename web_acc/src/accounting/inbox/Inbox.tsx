@@ -624,7 +624,7 @@ const Inbox = () => {
                             <CardTitle className="text-base text-[#2b2f38]">Transactions</CardTitle>
                         </CardHeader>
                         <CardContent className="p-0">
-                            <div className="overflow-x-auto border-t border-[#d8c6a1]">
+                            <div className="overflow-x-auto">
                                 <Table className="table-fixed">
                                     <colgroup>
                                         <col className="w-[76px]" />
