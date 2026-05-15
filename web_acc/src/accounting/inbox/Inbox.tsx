@@ -792,7 +792,7 @@ const Inbox = () => {
                                     className="shadow-none border-[#d8c6a1] rounded-md overflow-hidden"
                                     style={ledgerPaperStyle}
                                 >
-                                    <CardContent className="p-4 flex flex-col gap-6">
+                                    <CardContent className="p-0 flex flex-col gap-6">
                                         <div>
                                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                                             {isEditingSelectedEntry && entryDraft ? (
