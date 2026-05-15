@@ -46,12 +46,23 @@ export type JournalEntryRow = {
 
 export type LedgerRow = {
     id?: string;
+    journal_entry_id?: string | null;
+    journal_id?: string | null;
+    entry_id?: string | null;
+    je_id?: string | null;
+    jeId?: string | null;
+    journalEntryId?: string | null;
+    account_id?: string | null;
     entry_date?: string | null;
     code?: string | null;
     name?: string | null;
     line_type?: string | null;
     amount?: number | string | null;
+    debit?: number | string | null;
+    credit?: number | string | null;
     running_balance?: number | string | null;
+    memo?: string | null;
+    description?: string | null;
     [key: string]: unknown;
 };
 
