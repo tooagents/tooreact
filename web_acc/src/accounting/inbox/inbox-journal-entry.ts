@@ -29,7 +29,6 @@ export const ledgerPaperStyle = {
         linear-gradient(to right, rgba(225, 71, 71, 0.26) 0, rgba(225, 71, 71, 0.26) 1px, transparent 1px, transparent 100%),
         repeating-linear-gradient(to right, transparent 0, transparent 95px, rgba(7, 26, 14, 0.05) 2px, rgba(47, 126, 214, 0.1) 96px),
         repeating-linear-gradient(to bottom, transparent 0, transparent 29px, rgba(7, 26, 14, 0.05) 2px, rgba(47, 126, 214, 0.1) 30px)
-        repeating-linear-gradient(to bottom, transparent 0, transparent 29px, rgba(7, 26, 14, 0.05) 2px, rgba(47, 126, 214, 0.1) 30px)
     `,
     backgroundSize: '100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%',
     backgroundPosition: '23% 0, 56% 0, 48% 0, 0 0, 0 0',
