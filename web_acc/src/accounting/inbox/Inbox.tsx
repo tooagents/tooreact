@@ -795,49 +795,22 @@ const Inbox = () => {
                                     <CardContent className="p-0 flex flex-col gap-6">
                                         <div>
                                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                            {isEditingSelectedEntry && entryDraft ? (
-                                                <div className="min-w-0">
-                                                    <div className="flex flex-wrap items-center gap-2">
-                                                        <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-[#1f3a67]">
-                                                            {getEntryLabel(selectedEntry)}
-                                                        </span>
-                                                        <Badge className="border-[#d8c6a1] bg-[#fdf8ec] px-2 py-0.5 text-[#335376]">
-                                                            {getDisplayStatus(selectedEntry)}
-                                                        </Badge>
-                                                    </div>
-                                                    <Input
-                                                        className="mt-1.5 h-7 w-full max-w-[360px] border-[#b7c7df] bg-[#fdf8ec] px-2 text-sm font-semibold text-[#172033] shadow-none sm:max-w-[420px]"
-                                                        value={entryDraft.memo}
-                                                        onChange={(event) => updateDraftHeader('memo', event.target.value)}
-                                                        placeholder="Memo"
-                                                        disabled={isSavingEntry}
-                                                    />
-                                                    <Input
-                                                        type="date"
-                                                        className="mt-1 h-7 w-[135px] border-[#b7c7df] bg-[#fdf8ec] px-2 text-xs text-[#506080] shadow-none"
-                                                        value={entryDraft.entry_date}
-                                                        onChange={(event) => updateDraftHeader('entry_date', event.target.value)}
-                                                        disabled={isSavingEntry}
-                                                    />
+                                            <div className="min-w-0">
+                                                <div className="flex flex-wrap items-center gap-2">
+                                                    <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-[#1f3a67]">
+                                                        {getEntryLabel(selectedEntry)}
+                                                    </span>
+                                                    <Badge className="border-[#d8c6a1] bg-[#fdf8ec] px-2 py-0.5 text-[#335376]">
+                                                        {getDisplayStatus(selectedEntry)}
+                                                    </Badge>
                                                 </div>
-                                            ) : (
-                                                <div className="min-w-0">
-                                                    <div className="flex flex-wrap items-center gap-2">
-                                                        <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-[#1f3a67]">
-                                                            {getEntryLabel(selectedEntry)}
-                                                        </span>
-                                                        <Badge className="border-[#d8c6a1] bg-[#fdf8ec] px-2 py-0.5 text-[#335376]">
-                                                            {getDisplayStatus(selectedEntry)}
-                                                        </Badge>
-                                                    </div>
-                                                    <div className="mt-1.5 flex h-7 w-full max-w-[360px] items-center rounded-md border border-transparent px-2 text-sm font-semibold text-[#172033] sm:max-w-[420px]">
-                                                        <span className="truncate">{selectedEntry.memo || 'No memo'}</span>
-                                                    </div>
-                                                    <div className="mt-1 flex h-7 w-[135px] items-center rounded-md border border-transparent px-2 text-xs text-[#506080]">
-                                                        <span>{selectedEntry.entry_date || '-'}</span>
-                                                    </div>
+                                                <div className="mt-1.5 flex h-7 w-full max-w-[360px] items-center rounded-md border border-transparent px-2 text-sm font-semibold text-[#172033] sm:max-w-[420px]">
+                                                    <span className="truncate">{selectedEntry.memo || 'No memo'}</span>
                                                 </div>
-                                            )}
+                                                <div className="mt-1 flex h-7 w-[135px] items-center rounded-md border border-transparent px-2 text-xs text-[#506080]">
+                                                    <span>{selectedEntry.entry_date || '-'}</span>
+                                                </div>
+                                            </div>
                                             <div className="grid grid-cols-3 gap-2 lg:min-w-[300px]">
                                                 <div className="rounded-md border border-[#d8c6a1] bg-[#fdf8ec]/80 px-3 py-2">
                                                     <div className="text-[11px] font-medium uppercase text-[#506080]">Debit</div>
