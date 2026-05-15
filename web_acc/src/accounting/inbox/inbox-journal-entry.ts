@@ -24,11 +24,12 @@ export type JournalEntryPreview = {
 export const ledgerPaperStyle = {
     backgroundColor: '#f8f1de',
     backgroundImage: `
-        linear-gradient(to right, rgba(225, 71, 71, 0.34) 0, rgba(225, 71, 71, 0.34) 1px, transparent 1px, transparent 4px, rgba(225, 71, 71, 0.34) 4px, rgba(225, 71, 71, 0.34) 5px, transparent 5px, transparent 100%),
-        linear-gradient(to right, rgba(225, 71, 71, 0.34) 0, rgba(225, 71, 71, 0.34) 1px, transparent 1px, transparent 4px, rgba(225, 71, 71, 0.34) 4px, rgba(225, 71, 71, 0.34) 5px, transparent 5px, transparent 100%),
+        linear-gradient(to right, rgba(225, 71, 71, 0.34) 0, rgba(225, 71, 71, 0.34) 1px, transparent 1px, transparent 4px, rgba(225, 71, 71, 0.34) 2px, rgba(225, 71, 71, 0.34) 5px, transparent 5px, transparent 100%),
+        linear-gradient(to right, rgba(225, 71, 71, 0.34) 0, rgba(225, 71, 71, 0.34) 1px, transparent 1px, transparent 4px, rgba(225, 71, 71, 0.34) 2px, rgba(225, 71, 71, 0.34) 5px, transparent 5px, transparent 100%),
         linear-gradient(to right, rgba(225, 71, 71, 0.26) 0, rgba(225, 71, 71, 0.26) 1px, transparent 1px, transparent 100%),
-        repeating-linear-gradient(to right, transparent 0, transparent 95px, rgba(47, 126, 214, 0.26) 95px, rgba(47, 126, 214, 0.26) 96px),
-        repeating-linear-gradient(to bottom, transparent 0, transparent 29px, rgba(47, 126, 214, 0.22) 29px, rgba(47, 126, 214, 0.22) 30px)
+        repeating-linear-gradient(to right, transparent 0, transparent 95px, rgba(7, 26, 14, 0.05) 2px, rgba(47, 126, 214, 0.1) 96px),
+        repeating-linear-gradient(to bottom, transparent 0, transparent 29px, rgba(7, 26, 14, 0.05) 2px, rgba(47, 126, 214, 0.1) 30px)
+        repeating-linear-gradient(to bottom, transparent 0, transparent 29px, rgba(7, 26, 14, 0.05) 2px, rgba(47, 126, 214, 0.1) 30px)
     `,
     backgroundSize: '100% 100%, 100% 100%, 100% 100%, 100% 100%, 100% 100%',
     backgroundPosition: '23% 0, 56% 0, 48% 0, 0 0, 0 0',

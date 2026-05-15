@@ -786,13 +786,13 @@ const Inbox = () => {
                                 ) : null}
                             </div>
                         </CardHeader>
-                        <CardContent className="p-4 pt-0 flex flex-col gap-3">
+                        <CardContent className="p-0 pt-0 flex flex-col gap-3">
                             {selectedEntry ? (
                                 <Card
                                     className="shadow-none border-[#d8c6a1] rounded-md overflow-hidden"
                                     style={ledgerPaperStyle}
                                 >
-                                    <CardContent className="p-4 flex flex-col gap-3">
+                                    <CardContent className="p-4 flex flex-col gap-6">
                                         <div>
                                         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                                             {isEditingSelectedEntry && entryDraft ? (
