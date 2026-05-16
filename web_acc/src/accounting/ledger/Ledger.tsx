@@ -15,6 +15,7 @@ import { AccountRow, jeAPI, JournalEntryLine, JournalEntryRow, LedgerRow } from 
 
 const BCrumb = [{ to: '/', title: 'Home' }, { title: 'Ledger' }];
 const allAccountsValue = 'all';
+const pageSize = 20;
 
 const getAccountLabel = (account: AccountRow) => {
     const code = String(account.account_code ?? account.code ?? account.coa_code ?? '').trim();
@@ -51,7 +52,9 @@ const getEntryStatus = (entry: JournalEntryRow) => {
 };
 
 const getLedgerJournalEntryId = (row: LedgerRow) => {
+    const embeddedEntry = getEmbeddedLedgerEntry(row);
     const value =
+        embeddedEntry?.id ??
         row.journal_entry_id ??
         row.journal_id ??
         row.entry_id ??
@@ -60,6 +63,22 @@ const getLedgerJournalEntryId = (row: LedgerRow) => {
         row.journalEntryId;
 
     return String(value ?? '').trim() || null;
+};
+
+const getLedgerLineId = (row: LedgerRow) => {
+    const value =
+        row.journal_entry_line_id ??
+        row.journalEntryLineId ??
+        row.line_id ??
+        row.lineId ??
+        row.id;
+
+    return String(value ?? '').trim() || null;
+};
+
+const getEmbeddedLedgerEntry = (row: LedgerRow): JournalEntryRow | null => {
+    const entry = row.journal_entry ?? row.journalEntry ?? row.entry ?? row.je;
+    return entry && typeof entry === 'object' && 'id' in entry ? entry : null;
 };
 
 const getLedgerAccountKey = (row: LedgerRow) => {
@@ -94,12 +113,16 @@ const getRowKey = (row: LedgerRow, idx: number) =>
 const Ledger = () => {
     const [ledgerRows, setLedgerRows] = useState<LedgerRow[]>([]);
     const [entries, setEntries] = useState<JournalEntryRow[]>([]);
+    const [entryByIdFallback, setEntryByIdFallback] = useState<Record<string, JournalEntryRow>>({});
     const [accountLabelById, setAccountLabelById] = useState<Record<string, string>>({});
     const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null);
     const [accountFilter, setAccountFilter] = useState(allAccountsValue);
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
+    const [pageIndex, setPageIndex] = useState(0);
     const [isLedgerLoading, setIsLedgerLoading] = useState(false);
+    const [isSelectedEntryLoading, setIsSelectedEntryLoading] = useState(false);
+    const [selectedEntryError, setSelectedEntryError] = useState<string | null>(null);
     const [ledgerError, setLedgerError] = useState<string | null>(null);
 
     const loadLedger = async () => {
@@ -118,6 +141,7 @@ const Ledger = () => {
 
             setLedgerRows(rows);
             setEntries(journalEntries);
+            setEntryByIdFallback({});
             setAccountLabelById(map);
             setSelectedRowKey((currentKey) => {
                 if (currentKey && rows.some((row, idx) => getRowKey(row, idx) === currentKey)) return currentKey;
@@ -127,6 +151,7 @@ const Ledger = () => {
             setLedgerError(err instanceof Error ? err.message : 'Failed to load general ledger.');
             setLedgerRows([]);
             setEntries([]);
+            setEntryByIdFallback({});
             setAccountLabelById({});
             setSelectedRowKey(null);
         } finally {
@@ -141,8 +166,20 @@ const Ledger = () => {
     const entryById = useMemo(() => {
         const map = new Map<string, JournalEntryRow>();
         entries.forEach((entry) => map.set(entry.id, entry));
+        Object.values(entryByIdFallback).forEach((entry) => map.set(entry.id, entry));
         return map;
-    }, [entries]);
+    }, [entries, entryByIdFallback]);
+
+    const entryByLineId = useMemo(() => {
+        const map = new Map<string, JournalEntryRow>();
+        entryById.forEach((entry) => {
+            (entry.lines ?? []).forEach((line) => {
+                const lineId = String(line.id ?? '').trim();
+                if (lineId) map.set(lineId, entry);
+            });
+        });
+        return map;
+    }, [entryById]);
 
     const accountOptions = useMemo(() => {
         const options = new Map<string, string>();
@@ -161,12 +198,59 @@ const Ledger = () => {
         return matchesAccount && matchesStart && matchesEnd;
     }), [ledgerRows, accountFilter, dateFrom, dateTo]);
 
+    useEffect(() => {
+        setPageIndex(0);
+    }, [accountFilter, dateFrom, dateTo, ledgerRows.length]);
+
+    const pageCount = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+    const pageData = useMemo(
+        () => filteredRows.slice(pageIndex * pageSize, pageIndex * pageSize + pageSize),
+        [filteredRows, pageIndex],
+    );
+    const canPrev = pageIndex > 0;
+    const canNext = pageIndex + 1 < pageCount;
+
     const selectedRow = useMemo(() => {
         if (!selectedRowKey) return filteredRows[0];
         return filteredRows.find((row, idx) => getRowKey(row, idx) === selectedRowKey) ?? filteredRows[0];
     }, [filteredRows, selectedRowKey]);
 
-    const selectedEntry = selectedRow ? entryById.get(getLedgerJournalEntryId(selectedRow) ?? '') : undefined;
+    const selectedEntryId = selectedRow ? getLedgerJournalEntryId(selectedRow) : null;
+    const selectedLineId = selectedRow ? getLedgerLineId(selectedRow) : null;
+    const embeddedSelectedEntry = selectedRow ? getEmbeddedLedgerEntry(selectedRow) : null;
+    const selectedEntry =
+        embeddedSelectedEntry ??
+        (selectedEntryId ? entryById.get(selectedEntryId) : undefined) ??
+        (selectedLineId ? entryByLineId.get(selectedLineId) : undefined);
+
+    useEffect(() => {
+        if (!selectedEntryId || entryById.has(selectedEntryId) || embeddedSelectedEntry) {
+            setIsSelectedEntryLoading(false);
+            setSelectedEntryError(null);
+            return;
+        }
+
+        let isActive = true;
+        setIsSelectedEntryLoading(true);
+        setSelectedEntryError(null);
+
+        jeAPI.getEntry(selectedEntryId)
+            .then((entry) => {
+                if (!isActive) return;
+                setEntryByIdFallback((current) => ({ ...current, [entry.id]: entry }));
+            })
+            .catch((err) => {
+                if (!isActive) return;
+                setSelectedEntryError(err instanceof Error ? err.message : 'Failed to load linked journal entry.');
+            })
+            .finally(() => {
+                if (isActive) setIsSelectedEntryLoading(false);
+            });
+
+        return () => {
+            isActive = false;
+        };
+    }, [embeddedSelectedEntry, entryById, selectedEntryId]);
 
     const totals = useMemo<{ debit: number; credit: number }>(() => filteredRows.reduce<{ debit: number; credit: number }>(
         (sum, row) => ({
@@ -249,19 +333,22 @@ const Ledger = () => {
                             <Table>
                                 <THeader>
                                     <TRow>
-                                        <THead className="min-w-28 px-2">Date</THead>
-                                        <THead className="min-w-48 px-2">Account</THead>
-                                        <THead className="min-w-64 px-2">Memo</THead>
-                                        <THead className="min-w-24 px-2 text-right">Debit</THead>
-                                        <THead className="min-w-24 px-2 text-right">Credit</THead>
-                                        <THead className="min-w-28 px-2 text-right">Running</THead>
+                                        <THead className="min-w-24 px-2 text-xs">Date</THead>
+                                        <THead className="min-w-40 px-2 text-xs">Account</THead>
+                                        <THead className="min-w-36 px-2 text-xs">Memo</THead>
+                                        <THead className="min-w-20 px-2 text-right text-xs">Debit</THead>
+                                        <THead className="min-w-20 px-2 text-right text-xs">Credit</THead>
+                                        <THead className="min-w-24 px-2 text-right text-xs">Running</THead>
                                     </TRow>
                                 </THeader>
                                 <TBody>
-                                    {filteredRows.map((row, idx) => {
-                                        const key = getRowKey(row, idx);
+                                    {pageData.map((row, idx) => {
+                                        const rowIndex = pageIndex * pageSize + idx;
+                                        const key = getRowKey(row, rowIndex);
                                         const isSelected = row === selectedRow;
-                                        const entry = entryById.get(getLedgerJournalEntryId(row) ?? '');
+                                        const entry =
+                                            entryById.get(getLedgerJournalEntryId(row) ?? '') ??
+                                            entryByLineId.get(getLedgerLineId(row) ?? '');
 
                                         return (
                                             <TRow
@@ -281,29 +368,29 @@ const Ledger = () => {
                                                     }
                                                 }}
                                             >
-                                                <TCell className="px-2 py-2 text-sm">{row.entry_date || '-'}</TCell>
-                                                <TCell className="px-2 py-2 text-sm font-medium">{getLedgerAccountLabel(row, accountLabelById)}</TCell>
-                                                <TCell className="px-2 py-2 text-sm">
+                                                <TCell className="px-2 py-2 text-xs">{row.entry_date || '-'}</TCell>
+                                                <TCell className="px-2 py-2 text-xs">{getLedgerAccountLabel(row, accountLabelById)}</TCell>
+                                                <TCell className="px-2 py-2 text-xs">
                                                     <div className="line-clamp-2">
                                                         {String(row.memo ?? row.description ?? entry?.memo ?? '-')}
                                                     </div>
                                                 </TCell>
-                                                <TCell className="px-2 py-2 text-right text-sm tabular-nums">{getDebitAmount(row) ? formatMoney(getDebitAmount(row)) : '-'}</TCell>
-                                                <TCell className="px-2 py-2 text-right text-sm tabular-nums">{getCreditAmount(row) ? formatMoney(getCreditAmount(row)) : '-'}</TCell>
-                                                <TCell className="px-2 py-2 text-right text-sm tabular-nums">{formatMoney(row.running_balance ?? 0)}</TCell>
+                                                <TCell className="px-2 py-2 text-right text-xs tabular-nums">{getDebitAmount(row) ? formatMoney(getDebitAmount(row)) : '-'}</TCell>
+                                                <TCell className="px-2 py-2 text-right text-xs tabular-nums">{getCreditAmount(row) ? formatMoney(getCreditAmount(row)) : '-'}</TCell>
+                                                <TCell className="px-2 py-2 text-right text-xs tabular-nums">{formatMoney(row.running_balance ?? 0)}</TCell>
                                             </TRow>
                                         );
                                     })}
                                     {isLedgerLoading ? (
                                         <TRow>
-                                            <TCell className="px-3 py-4 text-sm text-muted-foreground" colSpan={6}>
+                                            <TCell className="px-3 py-4 text-xs text-muted-foreground" colSpan={6}>
                                                 Loading general ledger...
                                             </TCell>
                                         </TRow>
                                     ) : null}
                                     {!isLedgerLoading && filteredRows.length === 0 ? (
                                         <TRow>
-                                            <TCell className="px-2 py-3 text-sm text-muted-foreground" colSpan={6}>
+                                            <TCell className="px-2 py-3 text-xs text-muted-foreground" colSpan={6}>
                                                 No general ledger rows match the current filters.
                                             </TCell>
                                         </TRow>
@@ -311,83 +398,128 @@ const Ledger = () => {
                                 </TBody>
                             </Table>
                         </div>
+                        {filteredRows.length > 0 ? (
+                            <div className="flex flex-col gap-4 p-4">
+                                <div className="flex flex-col items-center justify-between gap-3 sm:flex-row">
+                                    <div className="flex w-full gap-2 sm:w-auto">
+                                        <Button
+                                            onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
+                                            disabled={!canPrev}
+                                            variant="secondary"
+                                            className="flex-1 text-xs sm:flex-none sm:text-sm"
+                                        >
+                                            Previous
+                                        </Button>
+                                        <Button
+                                            onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
+                                            disabled={!canNext}
+                                            className="flex-1 text-xs sm:flex-none sm:text-sm"
+                                        >
+                                            Next
+                                        </Button>
+                                    </div>
+
+                                    <div className="whitespace-nowrap text-xs text-forest-black dark:text-white/90 xs:text-base">
+                                        Page {pageIndex + 1} of {pageCount}
+                                    </div>
+                                </div>
+                            </div>
+                        ) : null}
                     </CardContent>
                 </Card>
 
-                <Card className="border-[#cdd8e8] bg-white shadow-none">
-                    <CardHeader className="p-4 pb-3">
+                <Card className="border-[#d8c6a1] bg-[#f8f1de] shadow-none">
+                    <CardHeader className="p-2 pb-1.5">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                             <div className="flex flex-col gap-1">
-                                <CardTitle className="text-base text-[#1f2f4a]">Journal Entry</CardTitle>
-                                <p className="text-xs text-[#64748b]">Linked entry for the selected ledger row.</p>
+                                <CardTitle className="text-sm text-[#2b2f38]">Journal Entry</CardTitle>
+                                <p className="text-[11px] text-[#506080]">Linked entry for the selected ledger row.</p>
                             </div>
                             {selectedEntry ? (
-                                <Button asChild variant="outline" className="h-8 rounded-full px-3">
+                                <Button asChild variant="outline" className="h-7 rounded-full px-2 text-xs">
                                     <Link to={`/app/acc/je/${selectedEntry.id}`}>
-                                        <Icon icon="solar:arrow-right-up-linear" className="h-4 w-4" />
+                                        <Icon icon="solar:arrow-right-up-linear" className="h-3.5 w-3.5" />
                                         Open
                                     </Link>
                                 </Button>
                             ) : null}
                         </div>
                     </CardHeader>
-                    <CardContent className="p-0">
+                    <CardContent className="flex flex-col gap-1.5 p-0 pt-0">
                         {selectedEntry ? (
-                            <div className="border-t border-[#d8c6a1] bg-[#f8f1de]" style={ledgerPaperStyle}>
-                                <div className="border-b border-[#d8c6a1]/80 px-4 py-3">
-                                    <div className="flex flex-wrap items-center justify-between gap-3">
+                            <Card className="overflow-hidden rounded-md border-[#d8c6a1] shadow-none" style={ledgerPaperStyle}>
+                                <CardContent className="flex flex-col gap-2.5 p-0">
+                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                                         <div className="min-w-0">
                                             <div className="flex flex-wrap items-center gap-2">
-                                                <span className="font-mono text-xs font-semibold uppercase text-[#1f3a67]">{getEntryLabel(selectedEntry)}</span>
-                                                <Badge className="border-[#b7c7df] bg-white px-2 py-0.5 text-[#335376]">{getEntryStatus(selectedEntry)}</Badge>
+                                                <span className="font-mono text-[11px] font-semibold uppercase text-[#1f3a67]">{getEntryLabel(selectedEntry)}</span>
+                                                <Badge className="border-[#d8c6a1] bg-[#fdf8ec] px-1.5 py-0 text-[10px] text-[#335376]">{getEntryStatus(selectedEntry)}</Badge>
                                             </div>
-                                            <div className="mt-2 text-sm font-semibold text-[#172033]">{selectedEntry.memo || 'No memo'}</div>
-                                            <div className="mt-1 text-xs text-[#64748b]">{selectedEntry.entry_date || '-'}</div>
+                                            <div className="mt-1 truncate text-xs font-semibold text-[#172033]">{selectedEntry.memo || 'No memo'}</div>
+                                            <div className="mt-0.5 text-[11px] text-[#506080]">{selectedEntry.entry_date || '-'}</div>
                                         </div>
                                     </div>
-                                </div>
-                                <div className="overflow-x-auto">
-                                    <Table>
-                                        <THeader>
-                                            <TRow className="border-b border-[#d8c6a1]/80 bg-[#fdf8ec]/70">
-                                                <THead className="min-w-24 px-4 text-xs uppercase text-[#1f3a67]">Type</THead>
-                                                <THead className="min-w-48 px-3 text-xs uppercase text-[#1f3a67]">Account</THead>
-                                                <THead className="min-w-28 px-3 text-right text-xs uppercase text-[#1f3a67]">Debit</THead>
-                                                <THead className="min-w-28 px-4 text-right text-xs uppercase text-[#1f3a67]">Credit</THead>
-                                            </TRow>
-                                        </THeader>
-                                        <TBody>
-                                            {(selectedEntry.lines ?? []).map((line, index) => {
-                                                const lineType = String(line.line_type ?? '').toLowerCase();
-                                                const amount = formatMoney(line.amount ?? 0);
 
-                                                return (
-                                                    <TRow key={line.id ?? `${selectedEntry.id}-${index}`} className="border-b border-[#d8c6a1]/60 last:border-b-0">
-                                                        <TCell className="px-4 py-3 text-sm">
-                                                            <span className={`inline-flex rounded-full px-2 py-1 text-xs font-medium ${lineType === 'debit' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                                                                {line.line_type || '-'}
-                                                            </span>
-                                                        </TCell>
-                                                        <TCell className="px-3 py-3 text-sm font-medium text-[#172033]">{getLineAccountLabel(line, accountLabelById)}</TCell>
-                                                        <TCell className="px-3 py-3 text-right font-mono text-sm tabular-nums text-[#172033]">{lineType === 'debit' ? amount : '-'}</TCell>
-                                                        <TCell className="px-4 py-3 text-right font-mono text-sm tabular-nums text-[#172033]">{lineType === 'credit' ? amount : '-'}</TCell>
-                                                    </TRow>
-                                                );
-                                            })}
-                                            {(selectedEntry.lines ?? []).length === 0 ? (
-                                                <TRow>
-                                                    <TCell className="px-4 py-4 text-sm text-[#64748b]" colSpan={4}>
-                                                        No lines found.
-                                                    </TCell>
+                                    <div className="overflow-hidden rounded-md border border-[#9eb8dc]/70 bg-[#fdf8ec]/70">
+                                        <Table className="w-full table-fixed">
+                                            <THeader>
+                                                <TRow className="border-b border-[#6fa0d8]/60 bg-[#fdf8ec]/70">
+                                                    <THead className="h-7 w-14 px-1.5 text-[10px] uppercase text-[#1f3a67]">Type</THead>
+                                                    <THead className="h-7 px-1.5 text-[10px] uppercase text-[#1f3a67]">Account</THead>
+                                                    <THead className="h-7 w-16 px-1.5 text-right text-[10px] uppercase text-[#1f3a67]">Debit</THead>
+                                                    <THead className="h-7 w-16 px-1.5 text-right text-[10px] uppercase text-[#1f3a67]">Credit</THead>
                                                 </TRow>
-                                            ) : null}
-                                        </TBody>
-                                    </Table>
-                                </div>
+                                            </THeader>
+                                            <TBody>
+                                                {(selectedEntry.lines ?? []).map((line, index) => {
+                                                    const lineType = String(line.line_type ?? '').toLowerCase();
+                                                    const amount = formatMoney(line.amount ?? 0);
+
+                                                    return (
+                                                        <TRow key={line.id ?? `${selectedEntry.id}-${index}`} className="border-b border-[#6fa0d8]/35 last:border-b-0">
+                                                            <TCell className="px-1.5 py-1.5 text-[11px]">
+                                                                <span className={`inline-flex max-w-full truncate rounded-full px-1.5 py-0.5 text-[10px] font-medium ${lineType === 'debit' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                                                                    {line.line_type || '-'}
+                                                                </span>
+                                                            </TCell>
+                                                            <TCell className="truncate px-1.5 py-1.5 text-[11px] font-medium text-[#172033]">{getLineAccountLabel(line, accountLabelById)}</TCell>
+                                                            <TCell className="px-1.5 py-1.5 text-right font-mono text-[11px] tabular-nums text-[#172033]">{lineType === 'debit' ? amount : '-'}</TCell>
+                                                            <TCell className="px-1.5 py-1.5 text-right font-mono text-[11px] tabular-nums text-[#172033]">{lineType === 'credit' ? amount : '-'}</TCell>
+                                                        </TRow>
+                                                    );
+                                                })}
+                                                {(selectedEntry.lines ?? []).length === 0 ? (
+                                                    <TRow>
+                                                        <TCell className="px-2 py-2 text-xs text-[#596986]" colSpan={4}>
+                                                            No lines found.
+                                                        </TCell>
+                                                    </TRow>
+                                                ) : null}
+                                            </TBody>
+                                        </Table>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                        ) : isSelectedEntryLoading ? (
+                            <div className="flex min-h-[260px] items-center justify-center border-t border-ld px-6 text-center text-sm font-medium text-muted-foreground">
+                                <LoadingSpinner size="sm" variant="dots" />
+                                <span className="ml-2">Loading linked journal entry...</span>
+                            </div>
+                        ) : selectedEntryError ? (
+                            <div className="flex min-h-[260px] items-center justify-center border-t border-ld px-6 text-center text-sm font-medium text-red-600">
+                                {selectedEntryError}
+                            </div>
+                        ) : selectedEntryId ? (
+                            <div className="flex min-h-[260px] items-center justify-center border-t border-ld px-6 text-center text-sm font-medium text-muted-foreground">
+                                Linked journal entry was not found for {selectedEntryId}.
+                            </div>
+                        ) : selectedLineId ? (
+                            <div className="flex min-h-[260px] items-center justify-center border-t border-ld px-6 text-center text-sm font-medium text-muted-foreground">
+                                The selected ledger row has no journal entry id, and no loaded journal entry line matched {selectedLineId}.
                             </div>
                         ) : (
                             <div className="flex min-h-[260px] items-center justify-center border-t border-ld px-6 text-center text-sm font-medium text-muted-foreground">
-                                Select a ledger row with a linked journal entry.
+                                The selected ledger row has no linked journal entry id.
                             </div>
                         )}
                     </CardContent>

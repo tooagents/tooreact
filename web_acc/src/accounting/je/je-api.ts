@@ -52,6 +52,14 @@ export type LedgerRow = {
     je_id?: string | null;
     jeId?: string | null;
     journalEntryId?: string | null;
+    journal_entry?: JournalEntryRow | null;
+    journalEntry?: JournalEntryRow | null;
+    entry?: JournalEntryRow | null;
+    je?: JournalEntryRow | null;
+    journal_entry_line_id?: string | null;
+    journalEntryLineId?: string | null;
+    line_id?: string | null;
+    lineId?: string | null;
     account_id?: string | null;
     entry_date?: string | null;
     code?: string | null;
@@ -94,6 +102,22 @@ async function parseApiResponse<T>(response: Response, message: string): Promise
     return response.json();
 }
 
+const unwrapJournalEntryResponse = (value: unknown): JournalEntryRow => {
+    if (value !== null && typeof value === 'object' && 'id' in value) {
+        return value as JournalEntryRow;
+    }
+
+    if (value !== null && typeof value === 'object') {
+        const record = value as Record<string, unknown>;
+        const nested = record.journal_entry ?? record.journalEntry ?? record.entry ?? record.data;
+        if (nested !== null && typeof nested === 'object' && 'id' in nested) {
+            return nested as JournalEntryRow;
+        }
+    }
+
+    throw new Error('Journal entry response did not include an entry.');
+};
+
 export const jeAPI = {
     async listAccounts(): Promise<AccountRow[]> {
         const response = await apiFetch('/acc/accounts');
@@ -113,6 +137,12 @@ export const jeAPI = {
     async listEntries(): Promise<JournalEntryRow[]> {
         const response = await apiFetch('/acc/je/getlist?limit=200');
         return parseApiResponse<JournalEntryRow[]>(response, 'Failed to fetch journal entries');
+    },
+
+    async getEntry(journalEntryId: string): Promise<JournalEntryRow> {
+        const response = await apiFetch(`/acc/je/getone/${encodeURIComponent(journalEntryId)}`);
+        const data = await parseApiResponse<unknown>(response, 'Failed to fetch journal entry');
+        return unwrapJournalEntryResponse(data);
     },
 
     async listLedger(): Promise<LedgerRow[]> {
