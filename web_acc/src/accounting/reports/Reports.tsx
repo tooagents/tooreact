@@ -284,16 +284,10 @@ const Reports = () => {
                             Trial Balance
                         </TabsTrigger>
                         <TabsTrigger
-                            value="bs"
+                            value="statements"
                             className="rounded-none border-b-2 border-transparent bg-transparent px-4 py-3 text-muted-foreground shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
                         >
-                            Balance Sheet
-                        </TabsTrigger>
-                        <TabsTrigger
-                            value="is"
-                            className="rounded-none border-b-2 border-transparent bg-transparent px-4 py-3 text-muted-foreground shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
-                        >
-                            Income Statement
+                            Balance Sheet / P&L
                         </TabsTrigger>
                         <TabsTrigger
                             value="close"
@@ -358,43 +352,43 @@ const Reports = () => {
                         </Card>
                     </TabsContent>
 
-                    <TabsContent value="bs" className="mt-4">
-                        <Card className="shadow-none border-secondary/20">
-                            <CardHeader className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
-                                <div>
-                                    <CardTitle className="text-base">Balance Sheet</CardTitle>
-                                    <div className="mt-1 text-xs text-muted-foreground">As of {toDate}</div>
-                                </div>
-                                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                                    <ReportMetric label="Assets" value={bsAssetsTotal} />
-                                    <ReportMetric label="Liabilities" value={bsLiabilitiesTotal} />
-                                    <ReportMetric label="Equity" value={bsEquityTotal} />
-                                    <ReportMetric label="Check" value={bsTotal} valueClass={getSignedClass(bsTotal)} />
-                                </div>
-                            </CardHeader>
-                            <CardContent className="border-t border-ld p-0">
-                                <StatementReport sections={balanceSheetSections} emptyLabel="No balance sheet rows for this period." />
-                            </CardContent>
-                        </Card>
-                    </TabsContent>
+                    <TabsContent value="statements" className="mt-4">
+                        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 xl:items-start">
+                            <Card className="shadow-none border-secondary/20">
+                                <CardHeader className="flex flex-col gap-1 p-4 lg:flex-row lg:items-start lg:justify-between">
+                                    <div className="lg:basis-1/4">
+                                        <CardTitle className="text-base">Balance Sheet</CardTitle>
+                                        <div className="mt-1 text-xs text-muted-foreground">As of {toDate}</div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:basis-3/4">
+                                        <ReportMetric label="Assets" value={bsAssetsTotal} />
+                                        <ReportMetric label="Liabilities" value={bsLiabilitiesTotal} />
+                                        <ReportMetric label="Equity" value={bsEquityTotal} />
+                                        <ReportMetric label="Check" value={bsTotal} valueClass={getSignedClass(bsTotal)} />
+                                    </div>
+                                </CardHeader>
+                                <CardContent className="border-t border-ld p-0">
+                                    <StatementReport sections={balanceSheetSections} emptyLabel="No balance sheet rows for this period." />
+                                </CardContent>
+                            </Card>
 
-                    <TabsContent value="is" className="mt-4">
-                        <Card className="shadow-none border-secondary/20">
-                            <CardHeader className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
-                                <div>
-                                    <CardTitle className="text-base">Income Statement</CardTitle>
-                                    <div className="mt-1 text-xs text-muted-foreground">{fromDate} to {toDate}</div>
-                                </div>
-                                <div className="grid grid-cols-3 gap-2">
-                                    <ReportMetric label="Revenue" value={revenueTotal} />
-                                    <ReportMetric label="Expenses" value={expenseTotal} />
-                                    <ReportMetric label="Net" value={isTotal} valueClass={getSignedClass(isTotal)} />
-                                </div>
-                            </CardHeader>
-                            <CardContent className="border-t border-ld p-0">
-                                <StatementReport sections={incomeStatementSections} emptyLabel="No income statement rows for this period." />
-                            </CardContent>
-                        </Card>
+                            <Card className="shadow-none border-secondary/20">
+                                <CardHeader className="flex flex-col gap-3 p-4 lg:flex-row lg:items-start lg:justify-between">
+                                    <div>
+                                        <CardTitle className="text-base">Profit & Loss</CardTitle>
+                                        <div className="mt-1 text-xs text-muted-foreground">{fromDate} to {toDate}</div>
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-2 lg:max-w-[320px]">
+                                        <ReportMetric label="Revenue" value={revenueTotal} />
+                                        <ReportMetric label="Expenses" value={expenseTotal} />
+                                        <ReportMetric label="Net" value={isTotal} valueClass={getSignedClass(isTotal)} />
+                                    </div>
+                                </CardHeader>
+                                <CardContent className="border-t border-ld p-0">
+                                    <StatementReport sections={incomeStatementSections} emptyLabel="No income statement rows for this period." />
+                                </CardContent>
+                            </Card>
+                        </div>
                     </TabsContent>
 
                     <TabsContent value="close" className="mt-4">
@@ -421,9 +415,9 @@ const Reports = () => {
 };
 
 const ReportMetric = ({ label, value, valueClass = 'text-[#172033]' }: { label: string; value: number; valueClass?: string }) => (
-    <div className="min-w-[112px] rounded-md border border-secondary/20 bg-muted/20 px-3 py-2">
+    <div className="min-w-0 rounded-md border border-secondary/20 bg-muted/20 px-2 py-2">
         <div className="text-[11px] font-medium uppercase text-muted-foreground">{label}</div>
-        <div className={`mt-1 font-mono text-sm font-semibold tabular-nums ${valueClass}`}>{formatMoney(value)}</div>
+        <div className={`mt-1 whitespace-nowrap font-mono text-sm font-semibold tabular-nums ${valueClass}`}>{formatMoney(value)}</div>
     </div>
 );
 
