@@ -8,8 +8,9 @@ Inline edit: ScheduleTable calls onUpdate → handleInlineUpdate → scheduleAPI
 
 Toggle active/inactive: ScheduleTable calls onToggleStatus → handleToggleScheduleStatus → performStatusUpdate → scheduleAPI.editSchedule in src/accounting/schedule/PayrollSchedule.tsx.
 
-Toggle inactive → active also opens the modal, and the modal submit uses scheduleAPI.editSchedule in src/accounting/schedule/ScheduleModal.tsx.
 
+
+Toggle inactive → active also opens the modal, and the modal submit uses scheduleAPI.editSchedule in src/accounting/schedule/ScheduleModal.tsx.
 
 Files to check:
 
