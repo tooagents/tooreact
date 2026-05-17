@@ -37,7 +37,7 @@ const SidebarContent: MenuItem[] = [
         heading: 'Home',
         children: [
             {
-                name: 'AI Agent Workspace',
+                name: 'Overview',
                 icon: 'solar:widget-2-linear',
                 id: uniqueId(),
                 url: '/app',
@@ -96,7 +96,7 @@ const SidebarContent: MenuItem[] = [
                 name: 'COA',
                 icon: 'solar:users-group-rounded-linear',
                 id: uniqueId(),
-                url: '/app/settings/employee',
+                url: '/app/settings/coa',
             },
             {
                 name: 'Billing & Subscription',

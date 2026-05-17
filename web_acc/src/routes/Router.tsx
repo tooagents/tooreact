@@ -42,6 +42,7 @@ const BillingCancel = Loadable(lazy(() => import('src/_settings/billing/BillingC
 
 /* =========================Biz========================= */
 const Employee = Loadable(lazy(() => import('src/_settings/employees/Employee')));
+const COA = Loadable(lazy(() => import('src/_settings/coa/COA')));
 const PayrollScheduleEntrance = Loadable(lazy(() => import('src/accounting/schedule/PayrollSchedule')));
 const PayrollHistoryList = Loadable(lazy(() => import('src/accounting/history/PayrollHistoryList')));
 const PayrollHistoryDetail = Loadable(lazy(() => import('src/accounting/history/PayrollHistoryDetail')));
@@ -79,6 +80,7 @@ const router = createBrowserRouter([
                     { index: true, element: <Modern /> },
 
                     { path: 'settings/employee', element: <Employee /> },
+                    { path: 'settings/coa', element: <COA /> },
 
                     { path: 'acc/inbox', element: <Inbox /> },
                     { path: 'acc/je', element: <PayrollHistoryList /> },
