@@ -29,8 +29,8 @@ type JournalEntryDraft = {
 };
 
 const getAccountLabel = (account: AccountRow) => {
-    const code = String(account.account_code ?? account.code ?? account.coa_code ?? '').trim();
-    const name = String(account.account_name ?? account.name ?? account.title ?? '').trim();
+    const code = String(account.coa_code ?? account.account_code ?? account.code ?? '').trim();
+    const name = String(account.coa_posting_name ?? account.account_name ?? account.name ?? account.title ?? '').trim();
 
     if (code && name) return `${code} - ${name}`;
     if (name) return name;
@@ -39,8 +39,8 @@ const getAccountLabel = (account: AccountRow) => {
 };
 
 const getLineAccountLabel = (line: JournalEntryLine, accountLabelById: Record<string, string>) => {
-    const accountCode = String(line.account_code ?? '').trim();
-    const accountName = String(line.account_name ?? '').trim();
+    const accountCode = String(line.coa_code ?? line.account_code ?? '').trim();
+    const accountName = String(line.coa_posting_name ?? line.account_name ?? '').trim();
     const accountLabel = String(line.account_label ?? '').trim();
     const accountId = String(line.account_id ?? '').trim();
 
@@ -148,7 +148,7 @@ const Entries = () => {
                 jeAPI.listAccounts(),
             ]);
             console.log('[JE API] /acc/journal-entries response:', existingEntries);
-            console.log('[JE API] /acc/accounts response:', accounts);
+            console.log('[JE API] /acc/coa response:', accounts);
 
             const map: Record<string, string> = {};
             for (const account of accounts) {

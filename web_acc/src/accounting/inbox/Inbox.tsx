@@ -37,6 +37,8 @@ type JournalEntryDraft = {
 };
 
 type LineAccountLabelSource = {
+    coa_code?: string | number | null;
+    coa_posting_name?: string | null;
     account_code?: string | number | null;
     account_name?: string | null;
     account_label?: string | null;
@@ -86,8 +88,8 @@ const getInjectionItems = (value: string): StreamItem[] => {
 };
 
 const getAccountLabel = (account: AccountRow) => {
-    const code = String(account.account_code ?? account.code ?? account.coa_code ?? '').trim();
-    const name = String(account.account_name ?? account.name ?? account.title ?? '').trim();
+    const code = String(account.coa_code ?? account.account_code ?? account.code ?? '').trim();
+    const name = String(account.coa_posting_name ?? account.account_name ?? account.name ?? account.title ?? '').trim();
 
     if (code && name) return `${code} - ${name}`;
     if (name) return name;
@@ -96,8 +98,8 @@ const getAccountLabel = (account: AccountRow) => {
 };
 
 const getLineAccountLabel = (line: LineAccountLabelSource, accountLabelById: Record<string, string>) => {
-    const accountCode = String(line.account_code ?? '').trim();
-    const accountName = String(line.account_name ?? '').trim();
+    const accountCode = String(line.coa_code ?? line.account_code ?? '').trim();
+    const accountName = String(line.coa_posting_name ?? line.account_name ?? '').trim();
     const accountLabel = String(line.account_label ?? '').trim();
     const accountId = String(line.account_id ?? '').trim();
 

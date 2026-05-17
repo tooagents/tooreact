@@ -2,6 +2,14 @@ import { apiFetch } from 'src/core/apihttp';
 
 export type AccountRow = {
     id: string;
+    coa_code?: string | null;
+    coa_posting_name?: string | null;
+    coa_group_level1?: string | null;
+    coa_group_level2?: string | null;
+    coa_group_level3?: string | null;
+    normal_balance?: string | null;
+    is_posting?: boolean | null;
+    is_active?: boolean | null;
     [key: string]: unknown;
 };
 
@@ -19,6 +27,8 @@ export type JournalEntryLine = {
     line_type?: string | null;
     amount?: number | string | null;
     account_id?: string | null;
+    coa_code?: string | null;
+    coa_posting_name?: string | null;
     account_code?: string | null;
     account_name?: string | null;
     account_label?: string | null;
@@ -61,6 +71,8 @@ export type LedgerRow = {
     line_id?: string | null;
     lineId?: string | null;
     account_id?: string | null;
+    coa_code?: string | null;
+    coa_posting_name?: string | null;
     entry_date?: string | null;
     code?: string | null;
     name?: string | null;
@@ -120,8 +132,8 @@ const unwrapJournalEntryResponse = (value: unknown): JournalEntryRow => {
 
 export const jeAPI = {
     async listAccounts(): Promise<AccountRow[]> {
-        const response = await apiFetch('/acc/accounts');
-        return parseApiResponse<AccountRow[]>(response, 'Failed to fetch accounts');
+        const response = await apiFetch('/acc/coa');
+        return parseApiResponse<AccountRow[]>(response, 'Failed to fetch COA accounts');
     },
 
     async applyGenericCoa(): Promise<ApplyCoaResponse> {

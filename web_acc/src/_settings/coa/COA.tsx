@@ -12,6 +12,11 @@ import { apiFetch } from 'src/core/apihttp';
 type COARow = {
     id?: string | null;
     account_id?: string | null;
+    coa_code?: string | null;
+    coa_posting_name?: string | null;
+    coa_group_level1?: string | null;
+    coa_group_level2?: string | null;
+    coa_group_level3?: string | null;
     code?: string | null;
     name?: string | null;
     type?: string | null;
@@ -38,7 +43,7 @@ async function parseCOAResponse<T>(response: Response, message: string): Promise
 
 const coaAPI = {
     async listCOA(): Promise<COARow[]> {
-        const response = await apiFetch('/acc/accounts');
+        const response = await apiFetch('/acc/coa');
         return parseCOAResponse<COARow[]>(response, 'Failed to fetch COA');
     },
 
@@ -49,7 +54,13 @@ const coaAPI = {
 };
 
 const getCOAKey = (row: COARow, index: number) =>
-    String(row.id ?? row.account_id ?? row.code ?? `${row.name ?? 'coa'}-${index}`);
+    String(row.id ?? row.account_id ?? row.coa_code ?? row.code ?? `${row.coa_posting_name ?? row.name ?? 'coa'}-${index}`);
+
+const getCOACode = (row: COARow) => String(row.coa_code ?? row.code ?? '').trim();
+
+const getCOAName = (row: COARow) => String(row.coa_posting_name ?? row.name ?? '').trim();
+
+const getCOAType = (row: COARow) => String(row.coa_group_level1 ?? row.type ?? '').trim();
 
 const getCOAStatus = (row: COARow) => {
     if (row.is_active === false) return 'Inactive';
@@ -59,9 +70,9 @@ const getCOAStatus = (row: COARow) => {
 const downloadCOACsv = (rows: COARow[]) => {
     const headers = ['Code', 'Name', 'Type', 'Normal Balance', 'Status'];
     const values = rows.map((row) => [
-        row.code ?? '',
-        row.name ?? '',
-        row.type ?? '',
+        getCOACode(row),
+        getCOAName(row),
+        getCOAType(row),
         row.normal_balance ?? '',
         getCOAStatus(row),
     ]);
@@ -106,7 +117,7 @@ const COA = () => {
         const needle = query.trim().toLowerCase();
         if (!needle) return coaRows;
         return coaRows.filter((row) =>
-            [row.code, row.name, row.type, row.normal_balance, getCOAStatus(row)]
+            [getCOACode(row), getCOAName(row), getCOAType(row), row.coa_group_level2, row.coa_group_level3, row.normal_balance, getCOAStatus(row)]
                 .some((value) => String(value ?? '').toLowerCase().includes(needle)),
         );
     }, [coaRows, query]);
@@ -199,9 +210,9 @@ const COA = () => {
                                 ) : filteredCOA.length > 0 ? (
                                     filteredCOA.map((row, index) => (
                                         <TRow key={getCOAKey(row, index)}>
-                                            <TCell className="font-mono text-sm text-gray-700 dark:text-white/70">{row.code || '-'}</TCell>
-                                            <TCell className="text-gray-700 dark:text-white/70">{row.name || '-'}</TCell>
-                                            <TCell className="capitalize text-gray-700 dark:text-white/70">{row.type || '-'}</TCell>
+                                            <TCell className="font-mono text-sm text-gray-700 dark:text-white/70">{getCOACode(row) || '-'}</TCell>
+                                            <TCell className="text-gray-700 dark:text-white/70">{getCOAName(row) || '-'}</TCell>
+                                            <TCell className="capitalize text-gray-700 dark:text-white/70">{getCOAType(row) || '-'}</TCell>
                                             <TCell className="capitalize text-gray-700 dark:text-white/70">{row.normal_balance || '-'}</TCell>
                                             <TCell>
                                                 <Badge className={`rounded-full ${row.is_active === false ? 'bg-gray-100 text-gray-700' : 'bg-emerald-100 text-emerald-700'}`}>
