@@ -255,6 +255,7 @@ const COA = () => {
     };
 
     const anyBusy = isLoading || Boolean(applyingTemplate) || savingAccount || Boolean(archivingAccount);
+    const cellClassName = 'px-3 py-2';
     const renderCOARows = (rows: COARow[], depth = 0): ReactElement[] =>
         rows.flatMap((row, index) => {
             const accountId = getCOAId(row);
@@ -269,10 +270,10 @@ const COA = () => {
 
             return [
                 <TRow key={rowKey} className={rowClassName}>
-                    <TCell className={nameClassName}>
+                    <TCell className={`${cellClassName} ${nameClassName}`}>
                         <div className="flex min-w-[280px] items-center" style={{ paddingLeft: `${Math.min(depth, MAX_COA_LEVEL - 1) * 32}px` }}>
                             {depth > 0 ? (
-                                <span className="relative mr-2 h-7 w-5 shrink-0" aria-hidden="true">
+                                <span className="relative mr-2 h-5 w-5 shrink-0" aria-hidden="true">
                                     <span className="absolute left-0 top-0 h-full border-l border-gray-200 dark:border-white/10" />
                                     <span className="absolute left-0 top-1/2 w-5 border-t border-gray-200 dark:border-white/10" />
                                 </span>
@@ -290,45 +291,47 @@ const COA = () => {
                             </span>
                         </div>
                     </TCell>
-                    <TCell className="text-gray-700 dark:text-white/70">Level {level}</TCell>
-                    <TCell className="capitalize text-gray-700 dark:text-white/70">{getNormalBalance(row) || '-'}</TCell>
-                    <TCell>
+                    <TCell className={`${cellClassName} text-gray-700 dark:text-white/70`}>Level {level}</TCell>
+                    <TCell className={`${cellClassName} capitalize text-gray-700 dark:text-white/70`}>{getNormalBalance(row) || '-'}</TCell>
+                    <TCell className={cellClassName}>
                         <Badge className={`rounded-full ${getCOAStatus(row).toLowerCase() === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-700'}`}>
                             {getCOAStatus(row) || '-'}
                         </Badge>
                     </TCell>
-                    <TCell>
+                    <TCell className={cellClassName}>
                         <Badge className={`rounded-full ${isPosting ? 'bg-sky-100 text-sky-700' : 'bg-gray-100 text-gray-700'}`}>
                             {isPosting ? 'Posting' : 'Header'}
                         </Badge>
                     </TCell>
-                    <TCell>
-                        <div className="flex justify-end gap-1">
-                            <Button
-                                type="button"
-                                variant="outline"
-                                className="h-8 w-8 rounded-md p-0"
-                                onClick={() => openEditAccount(row)}
-                                disabled={anyBusy || !accountId || isReadonly}
-                                title="Edit account"
-                            >
-                                <Icon icon="material-symbols:edit-outline-rounded" width={16} height={16} />
-                            </Button>
-                            <Button
-                                type="button"
-                                variant="outline"
-                                className="h-8 w-8 rounded-md p-0 text-red-600 hover:text-red-700"
-                                onClick={() => archiveAccount(row)}
-                                disabled={anyBusy || !accountId || isReadonly}
-                                title="Archive account"
-                            >
-                                {archivingAccount === accountId ? (
-                                    <LoadingSpinner size="sm" variant="dots" />
-                                ) : (
-                                    <Icon icon="material-symbols:archive-outline-rounded" width={16} height={16} />
-                                )}
-                            </Button>
-                        </div>
+                    <TCell className={cellClassName}>
+                        {isReadonly ? null : (
+                            <div className="flex justify-end gap-1">
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="h-7 w-7 rounded-md p-0"
+                                    onClick={() => openEditAccount(row)}
+                                    disabled={anyBusy || !accountId}
+                                    title="Edit account"
+                                >
+                                    <Icon icon="material-symbols:edit-outline-rounded" width={16} height={16} />
+                                </Button>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="h-7 w-7 rounded-md p-0 text-red-600 hover:text-red-700"
+                                    onClick={() => archiveAccount(row)}
+                                    disabled={anyBusy || !accountId}
+                                    title="Archive account"
+                                >
+                                    {archivingAccount === accountId ? (
+                                        <LoadingSpinner size="sm" variant="dots" />
+                                    ) : (
+                                        <Icon icon="material-symbols:archive-outline-rounded" width={16} height={16} />
+                                    )}
+                                </Button>
+                            </div>
+                        )}
                     </TCell>
                 </TRow>,
                 ...renderCOARows(children, depth + 1),
@@ -412,17 +415,17 @@ const COA = () => {
 
                     <div className="overflow-x-auto rounded-md border border-ld">
                         <Table>
-                            <THeader>
+                            <THeader className="[&_tr]:border-0">
                                 <TRow>
-                                    <THead className="font-semibold">Account</THead>
-                                    <THead className="font-semibold">Level</THead>
-                                    <THead className="font-semibold">Normal Balance</THead>
-                                    <THead className="font-semibold">Status</THead>
-                                    <THead className="font-semibold">Kind</THead>
-                                    <THead className="w-32 text-right font-semibold">Actions</THead>
+                                    <THead className="h-8 px-3 py-2 font-semibold">Account</THead>
+                                    <THead className="h-8 px-3 py-2 font-semibold">Level</THead>
+                                    <THead className="h-8 px-3 py-2 font-semibold">Normal Balance</THead>
+                                    <THead className="h-8 px-3 py-2 font-semibold">Status</THead>
+                                    <THead className="h-8 px-3 py-2 font-semibold">Kind</THead>
+                                    <THead className="h-8 w-32 px-3 py-2 text-right font-semibold">Actions</THead>
                                 </TRow>
                             </THeader>
-                            <TBody>
+                            <TBody className="[&_tr]:border-0">
                                 {isLoading ? (
                                     <TRow>
                                         <TCell colSpan={6} className="p-6 text-center text-gray-500">
