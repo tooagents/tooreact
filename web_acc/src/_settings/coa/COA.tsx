@@ -1,10 +1,12 @@
 import type { FormEvent, ReactElement } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '@iconify/react/dist/iconify.js';
+import { TbDotsVertical } from 'react-icons/tb';
 import BreadcrumbComp from 'src/_layouts/shared/breadcrumb/BreadcrumbComp';
 import LoadingSpinner from 'src/components/shared/LoadingSpinner';
 import { Badge } from 'src/components/ui/badge';
 import { Button } from 'src/components/ui/button';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from 'src/components/ui/dropdown-menu';
 import { Input } from 'src/components/ui/input';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
 import { coaAPI } from './COA-api';
@@ -305,31 +307,34 @@ const COA = () => {
                     </TCell>
                     <TCell className={cellClassName}>
                         {isReadonly ? null : (
-                            <div className="flex justify-end gap-1">
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    className="h-7 w-7 rounded-md p-0"
-                                    onClick={() => openEditAccount(row)}
-                                    disabled={anyBusy || !accountId}
-                                    title="Edit account"
-                                >
-                                    <Icon icon="material-symbols:edit-outline-rounded" width={16} height={16} />
-                                </Button>
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    className="h-7 w-7 rounded-md p-0 text-red-600 hover:text-red-700"
-                                    onClick={() => archiveAccount(row)}
-                                    disabled={anyBusy || !accountId}
-                                    title="Archive account"
-                                >
-                                    {archivingAccount === accountId ? (
-                                        <LoadingSpinner size="sm" variant="dots" />
-                                    ) : (
-                                        <Icon icon="material-symbols:archive-outline-rounded" width={16} height={16} />
-                                    )}
-                                </Button>
+                            <div className="flex justify-end">
+                                <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                        <button
+                                            type="button"
+                                            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-full hover:bg-lightprimary hover:text-primary disabled:pointer-events-none disabled:opacity-50"
+                                            disabled={anyBusy || !accountId}
+                                            title="Account actions"
+                                        >
+                                            <TbDotsVertical size={20} />
+                                            <span className="sr-only">Account actions</span>
+                                        </button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end" className="w-40">
+                                        <DropdownMenuItem className="flex cursor-pointer items-center gap-3" onClick={() => openEditAccount(row)}>
+                                            <Icon icon="solar:pen-new-square-broken" height={18} />
+                                            <span>Edit</span>
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem className="flex cursor-pointer items-center gap-3 text-red-600 focus:text-red-600" onClick={() => archiveAccount(row)}>
+                                            {archivingAccount === accountId ? (
+                                                <LoadingSpinner size="sm" variant="dots" />
+                                            ) : (
+                                                <Icon icon="solar:trash-bin-minimalistic-outline" height={18} />
+                                            )}
+                                            <span>Archive</span>
+                                        </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                </DropdownMenu>
                             </div>
                         )}
                     </TCell>
