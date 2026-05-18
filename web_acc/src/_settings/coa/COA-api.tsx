@@ -13,12 +13,11 @@ async function parseCOAResponse<T>(response: Response, message: string): Promise
 
 const toCOAPayload = (form: COAFormState) => ({
     coa_code: form.coa_code.trim(),
-    coa_posting_name: form.coa_posting_name.trim(),
-    coa_group_level1: form.coa_group_level1,
-    coa_group_level2: form.coa_group_level2.trim() || null,
-    coa_group_level3: form.coa_group_level3.trim() || null,
+    coa_name: form.coa_name.trim(),
+    coa_status: form.coa_status?.trim() || null,
     normal_balance: form.normal_balance,
     is_posting: form.is_posting,
+    is_deleted: form.is_deleted,
 });
 
 export const coaAPI = {
