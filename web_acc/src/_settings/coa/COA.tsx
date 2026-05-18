@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import type { FormEvent, ReactElement } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '@iconify/react/dist/iconify.js';
 import BreadcrumbComp from 'src/_layouts/shared/breadcrumb/BreadcrumbComp';
 import LoadingSpinner from 'src/components/shared/LoadingSpinner';
@@ -13,6 +14,7 @@ import type { COATemplate } from './COA-schema';
 import { coaTemplates } from './COA-template';
 
 const BCrumb = [{ to: '/', title: 'Home' }, { title: 'COA' }];
+const MAX_COA_LEVEL = 4;
 
 const emptyForm: COAFormState = {
     coa_code: '',
@@ -27,9 +29,14 @@ const emptyForm: COAFormState = {
 const getCOAKey = (row: COARow, index: number) => String(row.id ?? `${'coa'}-${index}`);
 const getCOAId = (row: COARow) => String(row.id ?? '').trim();
 const getCOACode = (row: COARow) => String(row.coa_code ??  '').trim();
-const getCOAName = (row: COARow) => String(row.coa_posting_name ?? '').trim();
+const getCOAName = (row: COARow) => String(row.coa_name ?? row.coa_posting_name ?? '').trim();
 const getCOAType = (row: COARow) => String(row.coa_group_level1 ?? row.type ?? '').trim();
 const getCOAStatus = (row: COARow) => String(row.coa_status ?? row.staus ?? '').trim();
+const getCOAChildren = (row: COARow) => (Array.isArray(row.children) ? row.children : []);
+const getCOALevel = (row: COARow, fallbackLevel = 1) => Number(row.coa_level ?? fallbackLevel);
+const getBoundedCOALevel = (row: COARow, fallbackLevel = 1) => Math.min(Math.max(getCOALevel(row, fallbackLevel), 1), MAX_COA_LEVEL);
+const getNormalBalance = (row: COARow) => String(row.normal_balance ?? '').trim();
+const toFormNormalBalance = (value: string): NormalBalance => (value.toLowerCase() === 'credit' ? 'Credit' : 'Debit');
 
 const rowToForm = (row: COARow): COAFormState => ({
     coa_code: getCOACode(row),
@@ -38,20 +45,76 @@ const rowToForm = (row: COARow): COAFormState => ({
     coa_group_level1: getCOAType(row) || 'Asset',
     coa_group_level2: String(row.coa_group_level2 ?? ''),
     coa_group_level3: String(row.coa_group_level3 ?? ''),
-    normal_balance: (String(row.normal_balance ?? 'Debit') || 'Debit') as NormalBalance,
+    normal_balance: toFormNormalBalance(String(row.normal_balance ?? 'Debit')),
     is_posting: row.is_posting !== false,    
 });
 
+const flattenCOATree = (rows: COARow[], depth = 1): COARow[] =>
+    rows.flatMap((row) => [row, ...(depth < MAX_COA_LEVEL ? flattenCOATree(getCOAChildren(row), depth + 1) : [])]);
+
+const rowMatchesQuery = (row: COARow, needle: string) =>
+    [getCOACode(row), getCOAName(row), getCOAType(row), row.coa_group_level2, row.coa_group_level3, getNormalBalance(row), getCOAStatus(row), row.coa_level]
+        .some((value) => String(value ?? '').toLowerCase().includes(needle));
+
+const filterCOATree = (rows: COARow[], needle: string, depth = 1): COARow[] =>
+    rows.reduce<COARow[]>((matches, row) => {
+        const filteredChildren = depth < MAX_COA_LEVEL ? filterCOATree(getCOAChildren(row), needle, depth + 1) : [];
+        if (rowMatchesQuery(row, needle) || filteredChildren.length > 0) {
+            matches.push({ ...row, children: filteredChildren });
+        }
+        return matches;
+    }, []);
+
+const sortCOATree = (rows: COARow[]): COARow[] =>
+    [...rows]
+        .sort((left, right) => getCOACode(left).localeCompare(getCOACode(right), undefined, { numeric: true }))
+        .map((row) => ({ ...row, children: sortCOATree(getCOAChildren(row)) }));
+
+const normalizeCOATree = (rows: COARow[]): COARow[] => {
+    const flatRows = flattenCOATree(rows).sort((left, right) => getCOACode(left).localeCompare(getCOACode(right), undefined, { numeric: true }));
+    const nodesById = new Map<string, COARow>();
+    const roots: COARow[] = [];
+    const lastNodeByLevel = new Map<number, COARow>();
+
+    flatRows.forEach((row) => {
+        const id = getCOAId(row);
+        if (id) nodesById.set(id, { ...row, children: [] });
+    });
+
+    flatRows.forEach((sourceRow) => {
+        const sourceId = getCOAId(sourceRow);
+        const row = sourceId ? nodesById.get(sourceId) : null;
+        if (!row) return;
+
+        const level = getBoundedCOALevel(row);
+        const parentId = String(row.parent_id ?? '').trim();
+        const parentById = parentId ? nodesById.get(parentId) : null;
+        const parent = parentById && getBoundedCOALevel(parentById) === level - 1 ? parentById : lastNodeByLevel.get(level - 1);
+
+        if (parent) {
+            parent.children = [...getCOAChildren(parent), row];
+        } else {
+            roots.push(row);
+        }
+
+        lastNodeByLevel.set(level, row);
+        for (let deeperLevel = level + 1; deeperLevel <= MAX_COA_LEVEL; deeperLevel += 1) {
+            lastNodeByLevel.delete(deeperLevel);
+        }
+    });
+
+    return sortCOATree(roots);
+};
+
 const downloadCOACsv = (rows: COARow[]) => {
-    const headers = ['Code', 'Name', 'Type', 'Group', 'Subgroup', 'Normal Balance', 'Status'];
-    const values = rows.map((row) => [
+    const headers = ['Code', 'Name', 'Level', 'Normal Balance', 'Status', 'Posting'];
+    const values = flattenCOATree(rows).map((row) => [
         getCOACode(row),
         getCOAName(row),
-        getCOAType(row),
-        row.coa_group_level2 ?? '',
-        row.coa_group_level3 ?? '',
-        row.normal_balance ?? '',
+        row.coa_level ?? '',
+        getNormalBalance(row),
         getCOAStatus(row),
+        row.is_posting ? 'Yes' : 'No',
     ]);
     const csv = [headers, ...values]
         .map((line) => line.map((value) => `"${String(value).replace(/"/g, '""')}"`).join(','))
@@ -83,7 +146,7 @@ const COA = () => {
         setIsLoading(true);
         setError(null);
         try {
-            setCOARows(await coaAPI.listCOA());
+            setCOARows(normalizeCOATree(await coaAPI.getTree()));
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to fetch COA.');
             setCOARows([]);
@@ -99,19 +162,20 @@ const COA = () => {
     const filteredCOA = useMemo(() => {
         const needle = query.trim().toLowerCase();
         if (!needle) return coaRows;
-        return coaRows.filter((row) =>
-            [getCOACode(row), getCOAName(row), getCOAType(row), row.coa_group_level2, row.coa_group_level3, row.normal_balance, getCOAStatus(row)]
-                .some((value) => String(value ?? '').toLowerCase().includes(needle)),
-        );
+        return filterCOATree(coaRows, needle);
     }, [coaRows, query]);
 
+    const flatCOA = useMemo(() => flattenCOATree(coaRows), [coaRows]);
+    const flatFilteredCOA = useMemo(() => flattenCOATree(filteredCOA), [filteredCOA]);
+
     const accountCountByType = useMemo(() => {
-        return coaRows.reduce<Record<string, number>>((totals, row) => {
-            const type = getCOAType(row) || 'unassigned';
+        return flatCOA.reduce<Record<string, number>>((totals, row) => {
+            const type = getCOAName(row) || getCOAType(row) || 'unassigned';
+            if (getCOALevel(row) !== 1) return totals;
             totals[type] = (totals[type] ?? 0) + 1;
             return totals;
         }, {});
-    }, [coaRows]);
+    }, [flatCOA]);
 
     const requestApplyTemplate = (template: COATemplate) => {
         setError(null);
@@ -191,6 +255,86 @@ const COA = () => {
     };
 
     const anyBusy = isLoading || Boolean(applyingTemplate) || savingAccount || Boolean(archivingAccount);
+    const renderCOARows = (rows: COARow[], depth = 0): ReactElement[] =>
+        rows.flatMap((row, index) => {
+            const accountId = getCOAId(row);
+            const level = getCOALevel(row, depth + 1);
+            const children = depth < MAX_COA_LEVEL - 1 ? getCOAChildren(row) : [];
+            const hasChildren = children.length > 0;
+            const isPosting = row.is_posting === true;
+            const isReadonly = row.is_readonly === true;
+            const rowKey = getCOAKey(row, index);
+            const rowClassName = isPosting ? '' : 'bg-gray-50/80 dark:bg-white/[0.03]';
+            const nameClassName = !hasChildren && (level >= MAX_COA_LEVEL || isPosting) ? 'font-normal text-gray-700 dark:text-white/70' : 'font-semibold text-gray-900 dark:text-white';
+
+            return [
+                <TRow key={rowKey} className={rowClassName}>
+                    <TCell className={nameClassName}>
+                        <div className="flex min-w-[280px] items-center" style={{ paddingLeft: `${Math.min(depth, MAX_COA_LEVEL - 1) * 32}px` }}>
+                            {depth > 0 ? (
+                                <span className="relative mr-2 h-7 w-5 shrink-0" aria-hidden="true">
+                                    <span className="absolute left-0 top-0 h-full border-l border-gray-200 dark:border-white/10" />
+                                    <span className="absolute left-0 top-1/2 w-5 border-t border-gray-200 dark:border-white/10" />
+                                </span>
+                            ) : null}
+                            <span className="flex h-5 w-5 shrink-0 items-center justify-center text-gray-400">
+                                {hasChildren ? (
+                                    <Icon icon="material-symbols:folder-outline-rounded" width={16} height={16} />
+                                ) : (
+                                    <span className="h-1.5 w-1.5 rounded-full bg-gray-300" />
+                                )}
+                            </span>
+                            <span className="ml-2">
+                                <span className="font-mono text-sm text-gray-700 dark:text-white/70">{getCOACode(row) || '-'}</span>
+                                <span className="ml-2">{getCOAName(row) || '-'}</span>
+                            </span>
+                        </div>
+                    </TCell>
+                    <TCell className="text-gray-700 dark:text-white/70">Level {level}</TCell>
+                    <TCell className="capitalize text-gray-700 dark:text-white/70">{getNormalBalance(row) || '-'}</TCell>
+                    <TCell>
+                        <Badge className={`rounded-full ${getCOAStatus(row).toLowerCase() === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-700'}`}>
+                            {getCOAStatus(row) || '-'}
+                        </Badge>
+                    </TCell>
+                    <TCell>
+                        <Badge className={`rounded-full ${isPosting ? 'bg-sky-100 text-sky-700' : 'bg-gray-100 text-gray-700'}`}>
+                            {isPosting ? 'Posting' : 'Header'}
+                        </Badge>
+                    </TCell>
+                    <TCell>
+                        <div className="flex justify-end gap-1">
+                            <Button
+                                type="button"
+                                variant="outline"
+                                className="h-8 w-8 rounded-md p-0"
+                                onClick={() => openEditAccount(row)}
+                                disabled={anyBusy || !accountId || isReadonly}
+                                title="Edit account"
+                            >
+                                <Icon icon="material-symbols:edit-outline-rounded" width={16} height={16} />
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                className="h-8 w-8 rounded-md p-0 text-red-600 hover:text-red-700"
+                                onClick={() => archiveAccount(row)}
+                                disabled={anyBusy || !accountId || isReadonly}
+                                title="Archive account"
+                            >
+                                {archivingAccount === accountId ? (
+                                    <LoadingSpinner size="sm" variant="dots" />
+                                ) : (
+                                    <Icon icon="material-symbols:archive-outline-rounded" width={16} height={16} />
+                                )}
+                            </Button>
+                        </div>
+                    </TCell>
+                </TRow>,
+                ...renderCOARows(children, depth + 1),
+            ];
+        });
+
     const headBoxes = (
         <div className="grid grid-cols-3 gap-2">
             {coaTemplates.map((template) => (
@@ -228,7 +372,7 @@ const COA = () => {
                     ))}
                     <div className="rounded-md border border-ld px-3 py-2">
                         <div className="text-xs text-muted-foreground">Total</div>
-                        <div className="text-lg font-semibold">{coaRows.length}</div>
+                        <div className="text-lg font-semibold">{flatCOA.length}</div>
                     </div>
                 </div>
 
@@ -254,7 +398,7 @@ const COA = () => {
                                 variant="outline"
                                 className="h-9 rounded-full"
                                 onClick={() => downloadCOACsv(filteredCOA)}
-                                disabled={filteredCOA.length === 0}
+                                disabled={flatFilteredCOA.length === 0}
                             >
                                 <Icon icon="material-symbols:download-rounded" width={18} height={18} />
                                 Export
@@ -270,73 +414,26 @@ const COA = () => {
                         <Table>
                             <THeader>
                                 <TRow>
-                                    <THead className="font-semibold">Code</THead>
-                                    <THead className="font-semibold">Name</THead>
-                                    <THead className="font-semibold">Type</THead>
-                                    <THead className="font-semibold">Group</THead>
+                                    <THead className="font-semibold">Account</THead>
+                                    <THead className="font-semibold">Level</THead>
                                     <THead className="font-semibold">Normal Balance</THead>
                                     <THead className="font-semibold">Status</THead>
+                                    <THead className="font-semibold">Kind</THead>
                                     <THead className="w-32 text-right font-semibold">Actions</THead>
                                 </TRow>
                             </THeader>
                             <TBody>
                                 {isLoading ? (
                                     <TRow>
-                                        <TCell colSpan={7} className="p-6 text-center text-gray-500">
+                                        <TCell colSpan={6} className="p-6 text-center text-gray-500">
                                             <LoadingSpinner size="md" />
                                         </TCell>
                                     </TRow>
-                                ) : filteredCOA.length > 0 ? (
-                                    filteredCOA.map((row, index) => {
-                                        const accountId = getCOAId(row);
-                                        return (
-                                            <TRow key={getCOAKey(row, index)}>
-                                                <TCell className="font-mono text-sm text-gray-700 dark:text-white/70">{getCOACode(row) || '-'}</TCell>
-                                                <TCell className="text-gray-700 dark:text-white/70">{getCOAName(row) || '-'}</TCell>
-                                                <TCell className="text-gray-700 dark:text-white/70">{getCOAType(row) || '-'}</TCell>
-                                                <TCell className="text-gray-700 dark:text-white/70">
-                                                    {[row.coa_group_level2, row.coa_group_level3].filter(Boolean).join(' / ') || '-'}
-                                                </TCell>
-                                                <TCell className="capitalize text-gray-700 dark:text-white/70">{row.normal_balance || '-'}</TCell>
-                                                <TCell>
-                                                    <Badge className={`rounded-full ${row.is_active === false ? 'bg-gray-100 text-gray-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                                                        {getCOAStatus(row)}
-                                                    </Badge>
-                                                </TCell>
-                                                <TCell>
-                                                    <div className="flex justify-end gap-1">
-                                                        <Button
-                                                            type="button"
-                                                            variant="outline"
-                                                            className="h-8 w-8 rounded-md p-0"
-                                                            onClick={() => openEditAccount(row)}
-                                                            disabled={anyBusy || !accountId}
-                                                            title="Edit account"
-                                                        >
-                                                            <Icon icon="material-symbols:edit-outline-rounded" width={16} height={16} />
-                                                        </Button>
-                                                        <Button
-                                                            type="button"
-                                                            variant="outline"
-                                                            className="h-8 w-8 rounded-md p-0 text-red-600 hover:text-red-700"
-                                                            onClick={() => archiveAccount(row)}
-                                                            disabled={anyBusy || !accountId}
-                                                            title="Archive account"
-                                                        >
-                                                            {archivingAccount === accountId ? (
-                                                                <LoadingSpinner size="sm" variant="dots" />
-                                                            ) : (
-                                                                <Icon icon="material-symbols:archive-outline-rounded" width={16} height={16} />
-                                                            )}
-                                                        </Button>
-                                                    </div>
-                                                </TCell>
-                                            </TRow>
-                                        );
-                                    })
+                                ) : flatFilteredCOA.length > 0 ? (
+                                    renderCOARows(filteredCOA)
                                 ) : (
                                     <TRow>
-                                        <TCell colSpan={7} className="p-6 text-center font-medium text-gray-500 dark:text-white/70">
+                                        <TCell colSpan={6} className="p-6 text-center font-medium text-gray-500 dark:text-white/70">
                                             No COA data available.
                                         </TCell>
                                     </TRow>

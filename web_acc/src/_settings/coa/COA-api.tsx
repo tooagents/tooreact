@@ -1,5 +1,5 @@
 import { apiFetch } from 'src/core/apihttp';
-import { COAFormState, COARow, COAGroupLevel1, NormalBalance, ApplyCOAResponse } from './COA-schema';
+import type { ApplyCOAResponse, COAFormState, COARow } from './COA-schema';
 
 async function parseCOAResponse<T>(response: Response, message: string): Promise<T> {
     if (!response.ok) {
@@ -22,18 +22,20 @@ const toCOAPayload = (form: COAFormState) => ({
 });
 
 export const coaAPI = {
-    async listCOA(): Promise<COARow[]> {
-        const response = await apiFetch('/acc/coa');
+    async getTree(): Promise<COARow[]> {
+        const response = await apiFetch('/acc/coa/get_tree');
         return parseCOAResponse<COARow[]>(response, 'Failed to fetch COA');
     },
+
 
     async applyTemplate(templateKey: string): Promise<ApplyCOAResponse> {
         const response = await apiFetch(`/acc/coa/templates/${encodeURIComponent(templateKey)}/apply`, { method: 'POST' });
         return parseCOAResponse<ApplyCOAResponse>(response, 'Failed to apply COA template');
     },
 
+
     async createCOA(payload: COAFormState): Promise<COARow> {
-        const response = await apiFetch('/acc/coa', {
+        const response = await apiFetch('/acc/coa/post_new', {
             method: 'POST',
             body: JSON.stringify(toCOAPayload(payload)),
         });

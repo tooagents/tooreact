@@ -11,8 +11,11 @@ export type COAGroupLevel1 = string;
 
 export type COARow = {
     id?: string | null;
+    parent_id?: string | null;
     coa_code?: string | null;
+    coa_name?: string | null;
     coa_status?: string | null;
+    coa_level?: number | null;
     coa_posting_name?: string | null;
     coa_group_level1?: string | null;
     coa_group_level2?: string | null;
@@ -21,6 +24,7 @@ export type COARow = {
     is_posting?: boolean | null;
     is_deleted?: boolean | null;
     is_readonly?: boolean | null;
+    children?: COARow[] | null;
     [key: string]: unknown;
 };
 
