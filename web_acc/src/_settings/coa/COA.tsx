@@ -4,181 +4,46 @@ import BreadcrumbComp from 'src/_layouts/shared/breadcrumb/BreadcrumbComp';
 import LoadingSpinner from 'src/components/shared/LoadingSpinner';
 import { Badge } from 'src/components/ui/badge';
 import { Button } from 'src/components/ui/button';
-import { Card, CardContent } from 'src/components/ui/card';
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from 'src/components/ui/dialog';
+import {Dialog,DialogContent,DialogDescription,DialogFooter,DialogHeader,DialogTitle,} from 'src/components/ui/dialog';
 import { Input } from 'src/components/ui/input';
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from 'src/components/ui/select';
+import {Select,SelectContent,SelectItem,SelectTrigger,SelectValue,} from 'src/components/ui/select';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
-import { apiFetch } from 'src/core/apihttp';
-
-type NormalBalance = 'debit' | 'credit';
-type COAGroupLevel1 = 'asset' | 'liability' | 'equity' | 'revenue' | 'expense';
-
-type COARow = {
-    id?: string | null;
-    account_id?: string | null;
-    coa_code?: string | null;
-    coa_posting_name?: string | null;
-    coa_group_level1?: string | null;
-    coa_group_level2?: string | null;
-    coa_group_level3?: string | null;
-    code?: string | null;
-    name?: string | null;
-    type?: string | null;
-    normal_balance?: string | null;
-    is_posting?: boolean | null;
-    is_active?: boolean | null;
-    [key: string]: unknown;
-};
-
-type COAFormState = {
-    coa_code: string;
-    coa_posting_name: string;
-    coa_group_level1: COAGroupLevel1;
-    coa_group_level2: string;
-    coa_group_level3: string;
-    normal_balance: NormalBalance;
-    is_posting: boolean;
-};
-
-type COATemplate = {
-    key: string;
-    name: string;
-    label: string;
-    description: string;
-};
-
-type ApplyCOAResponse = {
-    template?: string;
-    created?: number;
-    existing?: number;
-};
+import { coaAPI } from './COA-api';
+import type { COAFormState, COAGroupLevel1, COARow, NormalBalance } from './COA-schema';
+import type { COATemplate } from './COA-schema';
+import { coaTemplates } from './COA-template';
 
 const BCrumb = [{ to: '/', title: 'Home' }, { title: 'COA' }];
 
-const groupOptions: COAGroupLevel1[] = ['asset', 'liability', 'equity', 'revenue', 'expense'];
-const normalBalanceOptions: NormalBalance[] = ['debit', 'credit'];
-const coaTemplates: COATemplate[] = [
-    {
-        key: 'minimal-ca',
-        name: 'Minimal Canada',
-        label: 'Basic',
-        description: 'Small starter chart for common accounts.',
-    },
-    {
-        key: 'regular-sme-ca',
-        name: 'Regular SME Canada',
-        label: 'SME',
-        description: 'Broader chart for operating businesses.',
-    },
-    {
-        key: 'cra-reporting-ca',
-        name: 'CRA Reporting Canada',
-        label: 'CRA',
-        description: 'Accounts aligned to Canadian reporting categories.',
-    },
-];
+const groupOptions: COAGroupLevel1[] = ['Asset', 'Liability', 'Equity', 'Revenue', 'Expense'];
+const normalBalanceOptions: NormalBalance[] = ['Debit', 'Credit'];
 
 const emptyForm: COAFormState = {
     coa_code: '',
     coa_posting_name: '',
-    coa_group_level1: 'asset',
+    coa_group_level1: 'Asset',
     coa_group_level2: '',
     coa_group_level3: '',
-    normal_balance: 'debit',
+    normal_balance: 'Debit',
     is_posting: true,
 };
 
-async function parseCOAResponse<T>(response: Response, message: string): Promise<T> {
-    if (!response.ok) {
-        const details = await response.text().catch(() => '');
-        throw new Error(`${message}: ${response.status} ${response.statusText}${details ? ` - ${details}` : ''}`);
-    }
-
-    if (response.status === 204) return undefined as T;
-    return response.json();
-}
-
-const coaAPI = {
-    async listCOA(): Promise<COARow[]> {
-        const response = await apiFetch('/acc/coa');
-        return parseCOAResponse<COARow[]>(response, 'Failed to fetch COA');
-    },
-
-    async applyTemplate(templateKey: string): Promise<ApplyCOAResponse> {
-        const response = await apiFetch(`/acc/coa/templates/${encodeURIComponent(templateKey)}/apply`, { method: 'POST' });
-        return parseCOAResponse<ApplyCOAResponse>(response, 'Failed to apply COA template');
-    },
-
-    async createCOA(payload: COAFormState): Promise<COARow> {
-        const response = await apiFetch('/acc/coa', {
-            method: 'POST',
-            body: JSON.stringify(toCOAPayload(payload)),
-        });
-        return parseCOAResponse<COARow>(response, 'Failed to create COA account');
-    },
-
-    async updateCOA(coaId: string, payload: COAFormState): Promise<COARow> {
-        const response = await apiFetch(`/acc/coa/${encodeURIComponent(coaId)}`, {
-            method: 'PATCH',
-            body: JSON.stringify(toCOAPayload(payload)),
-        });
-        return parseCOAResponse<COARow>(response, 'Failed to update COA account');
-    },
-
-    async deleteCOA(coaId: string): Promise<void> {
-        const response = await apiFetch(`/acc/coa/${encodeURIComponent(coaId)}`, { method: 'DELETE' });
-        await parseCOAResponse<void>(response, 'Failed to archive COA account');
-    },
-};
-
-const toCOAPayload = (form: COAFormState) => ({
-    coa_code: form.coa_code.trim(),
-    coa_posting_name: form.coa_posting_name.trim(),
-    coa_group_level1: form.coa_group_level1,
-    coa_group_level2: form.coa_group_level2.trim() || null,
-    coa_group_level3: form.coa_group_level3.trim() || null,
-    normal_balance: form.normal_balance,
-    is_posting: form.is_posting,
-});
-
-const getCOAKey = (row: COARow, index: number) =>
-    String(row.id ?? row.account_id ?? row.coa_code ?? row.code ?? `${row.coa_posting_name ?? row.name ?? 'coa'}-${index}`);
-
-const getCOAId = (row: COARow) => String(row.id ?? row.account_id ?? '').trim();
-
-const getCOACode = (row: COARow) => String(row.coa_code ?? row.code ?? '').trim();
-
-const getCOAName = (row: COARow) => String(row.coa_posting_name ?? row.name ?? '').trim();
-
+const getCOAKey = (row: COARow, index: number) => String(row.id ?? `${'coa'}-${index}`);
+const getCOAId = (row: COARow) => String(row.id ?? '').trim();
+const getCOACode = (row: COARow) => String(row.coa_code ??  '').trim();
+const getCOAName = (row: COARow) => String(row.coa_posting_name ?? '').trim();
 const getCOAType = (row: COARow) => String(row.coa_group_level1 ?? row.type ?? '').trim();
-
-const getCOAStatus = (row: COARow) => {
-    if (row.is_active === false) return 'Inactive';
-    return 'Active';
-};
+const getCOAStatus = (row: COARow) => String(row.coa_status ?? row.staus ?? '').trim();
 
 const rowToForm = (row: COARow): COAFormState => ({
     coa_code: getCOACode(row),
+    coa_status: getCOAStatus(row),
     coa_posting_name: getCOAName(row),
-    coa_group_level1: (getCOAType(row) || 'asset') as COAGroupLevel1,
+    coa_group_level1: getCOAType(row) || 'Asset',
     coa_group_level2: String(row.coa_group_level2 ?? ''),
     coa_group_level3: String(row.coa_group_level3 ?? ''),
-    normal_balance: (String(row.normal_balance ?? 'debit') || 'debit') as NormalBalance,
-    is_posting: row.is_posting !== false,
+    normal_balance: (String(row.normal_balance ?? 'Debit') || 'Debit') as NormalBalance,
+    is_posting: row.is_posting !== false,    
 });
 
 const downloadCOACsv = (rows: COARow[]) => {
@@ -213,6 +78,7 @@ const COA = () => {
     const [archivingAccount, setArchivingAccount] = useState<string | null>(null);
     const [editingRow, setEditingRow] = useState<COARow | null>(null);
     const [isFormOpen, setIsFormOpen] = useState(false);
+    const [pendingTemplate, setPendingTemplate] = useState<COATemplate | null>(null);
     const [form, setForm] = useState<COAFormState>(emptyForm);
     const [error, setError] = useState<string | null>(null);
     const [message, setMessage] = useState<string | null>(null);
@@ -251,7 +117,16 @@ const COA = () => {
         }, {});
     }, [coaRows]);
 
-    const applyTemplate = async (template: COATemplate) => {
+    const requestApplyTemplate = (template: COATemplate) => {
+        setError(null);
+        setMessage(null);
+        setPendingTemplate(template);
+    };
+
+    const applyTemplate = async () => {
+        if (!pendingTemplate) return;
+
+        const template = pendingTemplate;
         setApplyingTemplate(template.key);
         setError(null);
         setMessage(null);
@@ -263,6 +138,7 @@ const COA = () => {
             setError(err instanceof Error ? err.message : 'Failed to apply COA template.');
         } finally {
             setApplyingTemplate(null);
+            setPendingTemplate(null);
         }
     };
 
@@ -319,71 +195,38 @@ const COA = () => {
     };
 
     const anyBusy = isLoading || Boolean(applyingTemplate) || savingAccount || Boolean(archivingAccount);
+    const headBoxes = (
+        <div className="grid grid-cols-3 gap-2">
+            {coaTemplates.map((template) => (
+                <Button
+                    key={template.key}
+                    type="button"
+                    variant="outline"
+                    className="h-auto min-h-[82px] w-[154px] items-start justify-start whitespace-normal rounded-md border-secondary/20 bg-transparent px-3 py-2 text-left shadow-none"
+                    onClick={() => requestApplyTemplate(template)}
+                    disabled={anyBusy}
+                >
+                    <span className="min-w-0">
+                        <span className="block text-sm font-semibold">{template.label}</span>
+                        <span className="block text-[11px] font-normal leading-snug text-muted-foreground">{template.name}</span>
+                        <span className="mt-1 block text-[11px] font-normal leading-snug text-muted-foreground">{template.description}</span>
+                    </span>
+                </Button>
+            ))}
+        </div>
+    );
 
     return (
         <>
-            <BreadcrumbComp title="COA" items={BCrumb} />
+            <BreadcrumbComp title="COA" items={BCrumb} leftContent={null} rightContent={headBoxes} />
             <div className="flex flex-col gap-4">
-                <Card className="border-secondary/20 shadow-none">
-                    <CardContent className="flex flex-col gap-4 p-4">
-                        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                            <div>
-                                <div className="text-sm font-medium">Chart of accounts</div>
-                                <div className="text-sm text-muted-foreground">Start from a template, then customize accounts for this business.</div>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-2">
-                                <Button variant="outline" className="h-9 rounded-full" onClick={loadCOA} disabled={anyBusy}>
-                                    {isLoading ? <LoadingSpinner size="sm" variant="dots" /> : null}
-                                    Refresh
-                                </Button>
-                                <Button
-                                    variant="outline"
-                                    className="h-9 rounded-full"
-                                    onClick={() => downloadCOACsv(filteredCOA)}
-                                    disabled={filteredCOA.length === 0}
-                                >
-                                    <Icon icon="material-symbols:download-rounded" width={18} height={18} />
-                                    Export
-                                </Button>
-                                <Button className="h-9 rounded-full" onClick={openNewAccount} disabled={anyBusy}>
-                                    <Icon icon="material-symbols:add-rounded" width={18} height={18} />
-                                    Add account
-                                </Button>
-                            </div>
-                        </div>
-
-                        <div className="grid gap-2 md:grid-cols-3">
-                            {coaTemplates.map((template) => (
-                                <Button
-                                    key={template.key}
-                                    type="button"
-                                    variant="outline"
-                                    className="h-auto min-h-16 justify-start rounded-md border-ld px-3 py-3 text-left"
-                                    onClick={() => applyTemplate(template)}
-                                    disabled={anyBusy}
-                                >
-                                    <span className="flex w-full items-center justify-between gap-3">
-                                        <span className="min-w-0">
-                                            <span className="block text-sm font-semibold">{template.label}</span>
-                                            <span className="block truncate text-xs font-normal text-muted-foreground">
-                                                {template.name} · {template.description}
-                                            </span>
-                                        </span>
-                                        {applyingTemplate === template.key ? <LoadingSpinner size="sm" variant="dots" /> : null}
-                                    </span>
-                                </Button>
-                            ))}
-                        </div>
-                    </CardContent>
-                </Card>
-
                 {error ? <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
                 {message ? <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</div> : null}
 
                 <div className="grid gap-2 px-4 sm:grid-cols-3 lg:grid-cols-6">
-                    {['asset', 'liability', 'equity', 'revenue', 'expense'].map((type) => (
+                    {groupOptions.map((type) => (
                         <div key={type} className="rounded-md border border-ld px-3 py-2">
-                            <div className="text-xs capitalize text-muted-foreground">{type}</div>
+                            <div className="text-xs text-muted-foreground">{type}</div>
                             <div className="text-lg font-semibold">{accountCountByType[type] ?? 0}</div>
                         </div>
                     ))}
@@ -394,20 +237,37 @@ const COA = () => {
                 </div>
 
                 <div className="space-y-4 p-4 pt-0">
-                    <div className="relative min-w-0">
-                        <Icon
-                            icon="solar:magnifer-linear"
-                            width="18"
-                            height="18"
-                            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 opacity-70"
-                        />
-                        <Input
-                            type="text"
-                            className="rounded-md border-0 bg-gray-100/80 pl-9 shadow-none placeholder:text-gray-400 focus-visible:ring-1 focus-visible:ring-secondary/40 focus-visible:ring-offset-0 dark:bg-slate-900/50 dark:placeholder:text-white/20"
-                            value={query}
-                            onChange={(event) => setQuery(event.target.value)}
-                            placeholder="Search COA..."
-                        />
+                    <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                        <div className="relative min-w-0 flex-1">
+                            <Icon
+                                icon="solar:magnifer-linear"
+                                width="18"
+                                height="18"
+                                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 opacity-70"
+                            />
+                            <Input
+                                type="text"
+                                className="rounded-md border-0 bg-gray-100/80 pl-9 shadow-none placeholder:text-gray-400 focus-visible:ring-1 focus-visible:ring-secondary/40 focus-visible:ring-offset-0 dark:bg-slate-900/50 dark:placeholder:text-white/20"
+                                value={query}
+                                onChange={(event) => setQuery(event.target.value)}
+                                placeholder="Search COA..."
+                            />
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                            <Button
+                                variant="outline"
+                                className="h-9 rounded-full"
+                                onClick={() => downloadCOACsv(filteredCOA)}
+                                disabled={filteredCOA.length === 0}
+                            >
+                                <Icon icon="material-symbols:download-rounded" width={18} height={18} />
+                                Export
+                            </Button>
+                            <Button className="h-9 rounded-full" onClick={openNewAccount} disabled={anyBusy}>
+                                <Icon icon="material-symbols:add-rounded" width={18} height={18} />
+                                Add account
+                            </Button>
+                        </div>
                     </div>
 
                     <div className="overflow-x-auto rounded-md border border-ld">
@@ -437,7 +297,7 @@ const COA = () => {
                                             <TRow key={getCOAKey(row, index)}>
                                                 <TCell className="font-mono text-sm text-gray-700 dark:text-white/70">{getCOACode(row) || '-'}</TCell>
                                                 <TCell className="text-gray-700 dark:text-white/70">{getCOAName(row) || '-'}</TCell>
-                                                <TCell className="capitalize text-gray-700 dark:text-white/70">{getCOAType(row) || '-'}</TCell>
+                                                <TCell className="text-gray-700 dark:text-white/70">{getCOAType(row) || '-'}</TCell>
                                                 <TCell className="text-gray-700 dark:text-white/70">
                                                     {[row.coa_group_level2, row.coa_group_level3].filter(Boolean).join(' / ') || '-'}
                                                 </TCell>
@@ -491,6 +351,35 @@ const COA = () => {
                 </div>
             </div>
 
+            <Dialog
+                open={Boolean(pendingTemplate)}
+                onOpenChange={(open) => {
+                    if (!open && !applyingTemplate) setPendingTemplate(null);
+                }}
+            >
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Apply {pendingTemplate?.label} template?</DialogTitle>
+                        <DialogDescription>
+                            This may overwrite or replace parts of your current chart of accounts. Please think again before continuing.
+                            This action cannot be recovered from this page.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                        Template: {pendingTemplate?.name}
+                    </div>
+                    <DialogFooter>
+                        <Button type="button" variant="outline" onClick={() => setPendingTemplate(null)} disabled={Boolean(applyingTemplate)}>
+                            Cancel
+                        </Button>
+                        <Button type="button" className="bg-red-600 text-white hover:bg-red-700" onClick={applyTemplate} disabled={Boolean(applyingTemplate)}>
+                            {applyingTemplate ? <LoadingSpinner size="sm" variant="dots" /> : null}
+                            Apply template
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             <Dialog open={isFormOpen} onOpenChange={setIsFormOpen}>
                 <DialogContent className="max-w-2xl">
                     <form onSubmit={submitAccount} className="space-y-4">
@@ -529,7 +418,7 @@ const COA = () => {
                                     </SelectTrigger>
                                     <SelectContent>
                                         {groupOptions.map((option) => (
-                                            <SelectItem key={option} value={option} className="capitalize">
+                                            <SelectItem key={option} value={option}>
                                                 {option}
                                             </SelectItem>
                                         ))}

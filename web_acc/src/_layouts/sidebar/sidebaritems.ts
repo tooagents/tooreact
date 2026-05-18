@@ -99,7 +99,7 @@ const SidebarContent: MenuItem[] = [
                 url: '/app/settings/coa',
             },
             {
-                name: 'Billing & Subscription',
+                name: 'Subscription',
                 icon: 'solar:card-2-linear',
                 id: uniqueId(),
                 url: '/app/settings/billing',
