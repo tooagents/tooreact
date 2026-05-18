@@ -11,8 +11,8 @@ import { Input } from 'src/components/ui/input';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
 import { coaAPI } from './COA-api';
 import { AccountFormDialog, ApplyTemplateDialog, groupOptions } from './COA-dialog';
-import type { COAFormState, COARow, NormalBalance } from './COA-schema';
-import type { COATemplate } from './COA-schema';
+import type { COAFormState, COARow, NormalBalance } from '../../types/type_coa';
+import type { COATemplate } from '../../types/type_coa';
 import { coaTemplates } from './COA-template';
 
 const BCrumb = [{ to: '/', title: 'Home' }, { title: 'COA' }];
@@ -20,10 +20,7 @@ const MAX_COA_LEVEL = 4;
 
 const emptyForm: COAFormState = {
     coa_code: '',
-    coa_posting_name: '',
-    coa_group_level1: 'Asset',
-    coa_group_level2: '',
-    coa_group_level3: '',
+    coa_name: '',
     normal_balance: 'Debit',
     is_posting: true,
 };
@@ -31,8 +28,7 @@ const emptyForm: COAFormState = {
 const getCOAKey = (row: COARow, index: number) => String(row.id ?? `${'coa'}-${index}`);
 const getCOAId = (row: COARow) => String(row.id ?? '').trim();
 const getCOACode = (row: COARow) => String(row.coa_code ??  '').trim();
-const getCOAName = (row: COARow) => String(row.coa_name ?? row.coa_posting_name ?? '').trim();
-const getCOAType = (row: COARow) => String(row.coa_group_level1 ?? row.type ?? '').trim();
+const getCOAName = (row: COARow) => String(row.coa_name ?? '').trim();
 const getCOAStatus = (row: COARow) => String(row.coa_status ?? row.staus ?? '').trim();
 const getCOAChildren = (row: COARow) => (Array.isArray(row.children) ? row.children : []);
 const getCOALevel = (row: COARow, fallbackLevel = 1) => Number(row.coa_level ?? fallbackLevel);
@@ -43,10 +39,8 @@ const toFormNormalBalance = (value: string): NormalBalance => (value.toLowerCase
 const rowToForm = (row: COARow): COAFormState => ({
     coa_code: getCOACode(row),
     coa_status: getCOAStatus(row),
-    coa_posting_name: getCOAName(row),
-    coa_group_level1: getCOAType(row) || 'Asset',
-    coa_group_level2: String(row.coa_group_level2 ?? ''),
-    coa_group_level3: String(row.coa_group_level3 ?? ''),
+    coa_name: getCOAName(row),
+    coa_level: getCOALevel(row),
     normal_balance: toFormNormalBalance(String(row.normal_balance ?? 'Debit')),
     is_posting: row.is_posting !== false,    
 });
@@ -55,7 +49,7 @@ const flattenCOATree = (rows: COARow[], depth = 1): COARow[] =>
     rows.flatMap((row) => [row, ...(depth < MAX_COA_LEVEL ? flattenCOATree(getCOAChildren(row), depth + 1) : [])]);
 
 const rowMatchesQuery = (row: COARow, needle: string) =>
-    [getCOACode(row), getCOAName(row), getCOAType(row), row.coa_group_level2, row.coa_group_level3, getNormalBalance(row), getCOAStatus(row), row.coa_level]
+    [getCOACode(row), getCOAName(row), getNormalBalance(row), getCOAStatus(row), row.coa_level]
         .some((value) => String(value ?? '').toLowerCase().includes(needle));
 
 const filterCOATree = (rows: COARow[], needle: string, depth = 1): COARow[] =>
@@ -169,15 +163,6 @@ const COA = () => {
 
     const flatCOA = useMemo(() => flattenCOATree(coaRows), [coaRows]);
     const flatFilteredCOA = useMemo(() => flattenCOATree(filteredCOA), [filteredCOA]);
-
-    const accountCountByType = useMemo(() => {
-        return flatCOA.reduce<Record<string, number>>((totals, row) => {
-            const type = getCOAName(row) || getCOAType(row) || 'unassigned';
-            if (getCOALevel(row) !== 1) return totals;
-            totals[type] = (totals[type] ?? 0) + 1;
-            return totals;
-        }, {});
-    }, [flatCOA]);
 
     const requestApplyTemplate = (template: COATemplate) => {
         setError(null);
@@ -371,18 +356,6 @@ const COA = () => {
                 {error ? <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div> : null}
                 {message ? <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</div> : null}
 
-                <div className="grid gap-2 px-4 sm:grid-cols-3 lg:grid-cols-6">
-                    {groupOptions.map((type) => (
-                        <div key={type} className="rounded-md border border-ld px-3 py-2">
-                            <div className="text-xs text-muted-foreground">{type}</div>
-                            <div className="text-lg font-semibold">{accountCountByType[type] ?? 0}</div>
-                        </div>
-                    ))}
-                    <div className="rounded-md border border-ld px-3 py-2">
-                        <div className="text-xs text-muted-foreground">Total</div>
-                        <div className="text-lg font-semibold">{flatCOA.length}</div>
-                    </div>
-                </div>
 
                 <div className="space-y-4 p-4 pt-0">
                     <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">

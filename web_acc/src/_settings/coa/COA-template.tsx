@@ -1,4 +1,4 @@
-import type { COATemplate } from './COA-schema';
+import type { COATemplate } from '../../types/type_coa';
 
 export const coaTemplates: COATemplate[] = [
     {

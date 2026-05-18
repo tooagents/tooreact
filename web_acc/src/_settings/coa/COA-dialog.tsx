@@ -11,8 +11,8 @@ import {
 } from 'src/components/ui/dialog';
 import { Input } from 'src/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'src/components/ui/select';
-import type { COAFormState, COAGroupLevel1, NormalBalance } from './COA-schema';
-import type { COATemplate } from './COA-schema';
+import type { COAFormState, COAGroupLevel1, NormalBalance } from '../../types/type_coa';
+import type { COATemplate } from '../../types/type_coa';
 
 export const groupOptions: COAGroupLevel1[] = ['Asset', 'Liability', 'Equity', 'Revenue', 'Expense'];
 const normalBalanceOptions: NormalBalance[] = ['Debit', 'Credit'];

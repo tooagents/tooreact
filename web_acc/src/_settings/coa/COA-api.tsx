@@ -1,5 +1,5 @@
 import { apiFetch } from 'src/core/apihttp';
-import type { ApplyCOAResponse, COAFormState, COARow } from './COA-schema';
+import type { ApplyCOAResponse, COAFormState, COARow } from '../../types/type_coa';
 
 async function parseCOAResponse<T>(response: Response, message: string): Promise<T> {
     if (!response.ok) {

@@ -16,10 +16,7 @@ export type COARow = {
     coa_name?: string | null;
     coa_status?: string | null;
     coa_level?: number | null;
-    coa_posting_name?: string | null;
-    coa_group_level1?: string | null;
-    coa_group_level2?: string | null;
-    coa_group_level3?: string | null;
+
     normal_balance?: string | null;
     is_posting?: boolean | null;
     is_deleted?: boolean | null;
@@ -31,10 +28,9 @@ export type COARow = {
 export type COAFormState = {
     coa_code: string;
     coa_status?: string;
-    coa_posting_name: string;
-    coa_group_level1: COAGroupLevel1;
-    coa_group_level2: string;
-    coa_group_level3: string;
+    coa_name: string;
+    coa_level?: number | null;
+    
     normal_balance: NormalBalance;
     is_posting: boolean;
     is_deleted?: boolean;
