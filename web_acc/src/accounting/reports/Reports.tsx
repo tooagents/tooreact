@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Icon } from '@iconify/react/dist/iconify.js';
 import { Badge } from 'src/components/ui/badge';
 import BreadcrumbComp from 'src/_layouts/shared/breadcrumb/BreadcrumbComp';
 import LoadingSpinner from 'src/components/shared/LoadingSpinner';
@@ -12,6 +13,7 @@ import { formatMoney } from 'src/core/format';
 import type { COARow } from 'src/types/type_coa';
 
 const BCrumb = [{ to: '/', title: 'Home' }, { title: 'Reports' }];
+const MAX_COA_LEVEL = 4;
 
 type TrialBalanceRow = {
     account_id?: string | null;
@@ -95,6 +97,7 @@ type DisplayStatementSection = {
 type HierarchyNode = {
     key: string;
     label: string;
+    code?: string | null;
     amount: number;
     count: number;
     level: number;
@@ -279,6 +282,122 @@ const getCOACode = (row: COARow) => String(row.coa_code ?? row.code ?? '').trim(
 
 const getCOAId = (row: COARow) => String(row.id ?? '').trim();
 
+const getCOALevel = (row: COARow, fallbackLevel = 1) => Number(row.coa_level ?? fallbackLevel);
+
+const getBoundedCOALevel = (row: COARow, fallbackLevel = 1) => Math.min(Math.max(getCOALevel(row, fallbackLevel), 1), MAX_COA_LEVEL);
+
+const flattenCOATree = (rows: COARow[], depth = 1): COARow[] =>
+    rows.flatMap((row) => [row, ...(depth < MAX_COA_LEVEL ? flattenCOATree(getCOAChildren(row), depth + 1) : [])]);
+
+const sortCOATree = (rows: COARow[]): COARow[] =>
+    [...rows]
+        .sort((left, right) => getCOACode(left).localeCompare(getCOACode(right), undefined, { numeric: true }))
+        .map((row) => ({ ...row, children: sortCOATree(getCOAChildren(row)) }));
+
+const normalizeCOATree = (rows: COARow[]): COARow[] => {
+    const flatRows = flattenCOATree(rows).sort((left, right) => getCOACode(left).localeCompare(getCOACode(right), undefined, { numeric: true }));
+    const nodesById = new Map<string, COARow>();
+    const roots: COARow[] = [];
+    const lastNodeByLevel = new Map<number, COARow>();
+
+    flatRows.forEach((row) => {
+        const id = getCOAId(row);
+        if (id) nodesById.set(id, { ...row, children: [] });
+    });
+
+    flatRows.forEach((sourceRow) => {
+        const sourceId = getCOAId(sourceRow);
+        const row = sourceId ? nodesById.get(sourceId) : null;
+        if (!row) return;
+
+        const level = getBoundedCOALevel(row);
+        const parentId = String(row.parent_id ?? '').trim();
+        const parentById = parentId ? nodesById.get(parentId) : null;
+        const parent = parentById && getBoundedCOALevel(parentById) === level - 1 ? parentById : lastNodeByLevel.get(level - 1);
+
+        if (parent) {
+            parent.children = [...getCOAChildren(parent), row];
+        } else {
+            roots.push(row);
+        }
+
+        lastNodeByLevel.set(level, row);
+        for (let deeperLevel = level + 1; deeperLevel <= MAX_COA_LEVEL; deeperLevel += 1) {
+            lastNodeByLevel.delete(deeperLevel);
+        }
+    });
+
+    return sortCOATree(roots);
+};
+
+const getNormalizedLabelKey = (value: string | null | undefined) => {
+    const normalized = String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    return normalized.endsWith('s') ? normalized.slice(0, -1) : normalized;
+};
+
+const getStatementAccountLookup = (accounts: StatementPostingAccount[]) => {
+    const lookup = new Map<string, StatementPostingAccount[]>();
+
+    accounts.forEach((account) => {
+        getAccountLookupKeys(account).forEach((key) => {
+            lookup.set(key, [...(lookup.get(key) ?? []), account]);
+        });
+    });
+
+    return lookup;
+};
+
+const getCOALookupKeys = (row: COARow) => [getCOAId(row), getCOACode(row)].filter(Boolean);
+
+const getDirectStatementAccounts = (row: COARow, lookup: Map<string, StatementPostingAccount[]>) => {
+    const accounts = getCOALookupKeys(row).flatMap((key) => lookup.get(key) ?? []);
+    return [...new Set(accounts)];
+};
+
+const getStatementAccountAmount = (accounts: StatementPostingAccount[]) =>
+    accounts.reduce((sum, account) => sum + getNumber(account.amount), 0);
+
+const getStatementSectionRoot = (section: DisplayStatementSection, coaRows: COARow[]) => {
+    const sectionKeys = new Set([getNormalizedLabelKey(section.key), getNormalizedLabelKey(section.title)]);
+    return coaRows.find((row) => sectionKeys.has(getNormalizedLabelKey(getCOAName(row))));
+};
+
+const buildCOAStatementNodes = (
+    section: DisplayStatementSection,
+    coaRows: COARow[],
+    accounts: StatementPostingAccount[],
+) => {
+    const lookup = getStatementAccountLookup(accounts);
+    const sectionRoot = getStatementSectionRoot(section, coaRows);
+    if (!sectionRoot) return null;
+
+    const visit = (row: COARow, level: number): HierarchyNode[] => {
+        const childNodes = getCOAChildren(row).flatMap((child) => visit(child, level + 1));
+        const directAccounts = getDirectStatementAccounts(row, lookup);
+        const childAccounts = childNodes.flatMap((node) => node.accounts);
+        const nodeAccounts = [...new Set([...directAccounts, ...childAccounts])];
+
+        if (nodeAccounts.length === 0) return childNodes;
+
+        const rowId = getCOAId(row) || getCOACode(row) || getCOAName(row);
+        return [
+            {
+                key: `${section.key}-coa-${rowId}`,
+                label: getGroupLabel(getCOAName(row), getCOACode(row) || 'Unassigned'),
+                code: getCOACode(row),
+                amount: getStatementAccountAmount(nodeAccounts),
+                count: nodeAccounts.length,
+                level,
+                accounts: nodeAccounts,
+                sectionKey: section.key,
+            },
+            ...childNodes,
+        ];
+    };
+
+    return getCOAChildren(sectionRoot).flatMap((child) => visit(child, 1));
+};
+
 const buildCOAAccountMetaByKey = (rows: COARow[]) => {
     const metaByKey: Record<string, COAAccountMeta> = {};
     const entries: { row: COARow; ancestors: COARow[] }[] = [];
@@ -434,6 +553,7 @@ const Reports = () => {
     const [balanceSheet, setBalanceSheet] = useState<BalanceSheetReport>({});
     const [incomeStatement, setIncomeStatement] = useState<IncomeStatementReport>({});
     const [accountMetaByKey, setAccountMetaByKey] = useState<Record<string, COAAccountMeta>>({});
+    const [coaRows, setCOARows] = useState<COARow[]>([]);
     const [isLoading, setIsLoading] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -454,13 +574,16 @@ const Reports = () => {
             setTrialBalanceRows(tb);
             setBalanceSheet(bs);
             setIncomeStatement(isData);
-            setAccountMetaByKey(buildCOAAccountMetaByKey(coaTree));
+            const normalizedCOATree = normalizeCOATree(coaTree);
+            setCOARows(normalizedCOATree);
+            setAccountMetaByKey(buildCOAAccountMetaByKey(normalizedCOATree));
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to load reports.');
             setTrialBalanceRows([]);
             setBalanceSheet({});
             setIncomeStatement({});
             setAccountMetaByKey({});
+            setCOARows([]);
         } finally {
             setIsLoading(false);
         }
@@ -662,6 +785,7 @@ const Reports = () => {
                                     emptyLabel="No balance sheet rows for this period."
                                     defaultLabel="All Balance Sheet"
                                     accountMetaByKey={accountMetaByKey}
+                                    coaRows={coaRows}
                                 />
                             </CardContent>
                         </Card>
@@ -686,6 +810,7 @@ const Reports = () => {
                                     emptyLabel="No income statement rows for this period."
                                     defaultLabel="All Profit & Loss"
                                     accountMetaByKey={accountMetaByKey}
+                                    coaRows={coaRows}
                                 />
                             </CardContent>
                         </Card>
@@ -726,11 +851,13 @@ const HierarchicalStatementReport = ({
     emptyLabel,
     defaultLabel,
     accountMetaByKey,
+    coaRows,
 }: {
     sections: DisplayStatementSection[];
     emptyLabel: string;
     defaultLabel: string;
     accountMetaByKey: Record<string, COAAccountMeta>;
+    coaRows: COARow[];
 }) => {
     const [selectedKey, setSelectedKey] = useState('all');
 
@@ -759,6 +886,12 @@ const HierarchicalStatementReport = ({
                 accounts: sectionAccounts,
                 sectionKey: displaySection.key,
             });
+
+            const coaNodes = buildCOAStatementNodes(displaySection, coaRows, sectionAccounts);
+            if (coaNodes) {
+                hierarchy.push(...coaNodes);
+                return;
+            }
 
             groupStatementAccountsByCOA(displaySection.key, sectionAccounts, accountMetaByKey).forEach((level2) => {
                 hierarchy.push({
@@ -789,7 +922,7 @@ const HierarchicalStatementReport = ({
         });
 
         return hierarchy;
-    }, [accountMetaByKey, defaultLabel, sections]);
+    }, [accountMetaByKey, coaRows, defaultLabel, sections]);
 
     useEffect(() => {
         if (!nodes.some((node) => node.key === selectedKey)) {
@@ -813,28 +946,53 @@ const HierarchicalStatementReport = ({
     }
 
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)]">
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(420px,40%)_minmax(0,1fr)]">
             <div className="border-b border-ld lg:border-b-0 lg:border-r">
                 <div className="max-h-[560px] overflow-y-auto p-2">
-                    {nodes.map((node) => (
-                        <button
-                            key={node.key}
-                            type="button"
-                            className={`grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 rounded-md px-2 py-2 text-left transition-colors ${
-                                selectedKey === node.key ? 'bg-primary/10 text-primary' : 'hover:bg-muted/50'
-                            }`}
-                            style={{ paddingLeft: `${8 + node.level * 18}px` }}
-                            onClick={() => setSelectedKey(node.key)}
-                        >
-                            <span className="min-w-0">
-                                <span className="block truncate text-sm font-medium">{node.label}</span>
-                                <span className="block text-xs text-muted-foreground">
-                                    {node.count} {node.count === 1 ? 'account' : 'accounts'}
+                    {nodes.map((node, index) => {
+                        const hasChildren = nodes[index + 1]?.level > node.level;
+                        const isSelected = selectedKey === node.key;
+                        const isPostingLeaf = !hasChildren && node.level > 0;
+
+                        return (
+                            <button
+                                key={node.key}
+                                type="button"
+                                className={`grid w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-2 py-2 text-left transition-colors ${
+                                    isSelected ? 'bg-primary/10 text-primary' : hasChildren ? 'bg-gray-50/80 hover:bg-muted/60 dark:bg-white/[0.03]' : 'hover:bg-muted/50'
+                                }`}
+                                onClick={() => setSelectedKey(node.key)}
+                            >
+                                <span className="flex min-w-0 items-center" style={{ paddingLeft: `${Math.min(node.level, MAX_COA_LEVEL - 1) * 32}px` }}>
+                                    {node.level > 0 ? (
+                                        <span className="relative mr-2 h-5 w-5 shrink-0" aria-hidden="true">
+                                            <span className="absolute left-0 top-0 h-full border-l border-gray-200 dark:border-white/10" />
+                                            <span className="absolute left-0 top-1/2 w-5 border-t border-gray-200 dark:border-white/10" />
+                                        </span>
+                                    ) : null}
+                                    <span className="flex h-5 w-5 shrink-0 items-center justify-center text-gray-400">
+                                        {hasChildren || node.level === 0 ? (
+                                            <Icon icon="material-symbols:folder-outline-rounded" width={16} height={16} />
+                                        ) : (
+                                            <span className="h-1.5 w-1.5 rounded-full bg-gray-300" />
+                                        )}
+                                    </span>
+                                    <span className="ml-2 min-w-0">
+                                        <span className={`block truncate text-sm ${isPostingLeaf ? 'font-normal text-gray-700 dark:text-white/70' : 'font-semibold text-gray-900 dark:text-white'}`}>
+                                            {node.code ? (
+                                                <span className="font-mono text-sm text-gray-700 dark:text-white/70">{node.code}</span>
+                                            ) : null}
+                                            {node.code ? <span className="ml-2">{node.label}</span> : node.label}
+                                        </span>
+                                        <span className="block text-xs text-muted-foreground">
+                                            {node.count} {node.count === 1 ? 'account' : 'accounts'}
+                                        </span>
+                                    </span>
                                 </span>
-                            </span>
-                            <span className="font-mono text-xs font-semibold tabular-nums">{formatMoney(node.amount)}</span>
-                        </button>
-                    ))}
+                                <span className="whitespace-nowrap font-mono text-xs font-semibold tabular-nums">{formatMoney(node.amount)}</span>
+                            </button>
+                        );
+                    })}
                 </div>
             </div>
 
