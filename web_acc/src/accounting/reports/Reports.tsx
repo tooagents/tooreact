@@ -9,6 +9,7 @@ import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/tab
 import { Tabs, TabsContent, TabsList, TabsTrigger } from 'src/components/ui/tabs';
 import { apiFetch } from 'src/core/apihttp';
 import { formatMoney } from 'src/core/format';
+import type { COARow } from 'src/types/type_coa';
 
 const BCrumb = [{ to: '/', title: 'Home' }, { title: 'Reports' }];
 
@@ -103,6 +104,19 @@ type HierarchyNode = {
     level3Name?: string | null;
 };
 
+type COAAccountMeta = {
+    type?: string | null;
+    group?: string | null;
+    subgroup?: string | null;
+};
+
+type StatementAccountGroup = {
+    key: string;
+    label: string;
+    amount: number;
+    accounts: StatementPostingAccount[];
+};
+
 const getNumber = (value: unknown) => {
     const numberValue = Number(value ?? 0);
     return Number.isFinite(numberValue) ? numberValue : 0;
@@ -118,6 +132,11 @@ const getAccountLabel = (row: StatementPostingAccount | TrialBalanceRow) => {
     if (code && name) return `${code} ${name}`;
     return name || code || String(row.account_id ?? '-');
 };
+
+const getAccountLookupKeys = (row: StatementPostingAccount | TrialBalanceRow) =>
+    [row.account_id, row.coa_code, row.code]
+        .map((value) => String(value ?? '').trim())
+        .filter(Boolean);
 
 const getCurrentMonthValue = () => {
     const now = new Date();
@@ -162,8 +181,151 @@ const getGroupLabel = (value: string | null | undefined, fallback: string) => {
     return text ? titleCase(text) : fallback;
 };
 
-const getTrialBalanceType = (row: TrialBalanceRow) =>
-    getGroupLabel(row.coa_group_level1 ?? row.type, '-');
+const getTrialBalanceType = (row: TrialBalanceRow, accountMetaByKey: Record<string, COAAccountMeta>) => {
+    const meta = getAccountLookupKeys(row)
+        .map((key) => accountMetaByKey[key])
+        .find(Boolean);
+
+    return getGroupLabel(meta?.type ?? row.coa_group_level1 ?? row.type, '-');
+};
+
+const getPostingAccountGroup = (row: StatementPostingAccount, accountMetaByKey: Record<string, COAAccountMeta>) => {
+    const meta = getAccountMeta(row, accountMetaByKey);
+
+    return getGroupLabel(
+        meta?.subgroup ?? meta?.group ?? row.coa_group_level3 ?? row.coa_group_level2,
+        '-',
+    );
+};
+
+const getAccountMeta = (
+    row: StatementPostingAccount | TrialBalanceRow,
+    accountMetaByKey: Record<string, COAAccountMeta>,
+) =>
+    getAccountLookupKeys(row)
+        .map((key) => accountMetaByKey[key])
+        .find(Boolean);
+
+const getFirstAccountMetaLabel = (
+    accounts: StatementPostingAccount[],
+    accountMetaByKey: Record<string, COAAccountMeta>,
+    key: keyof COAAccountMeta,
+    fallback?: string | null,
+) => {
+    const direct = String(fallback ?? '').trim();
+    if (direct) return direct;
+
+    return accounts
+        .map((account) => String(getAccountMeta(account, accountMetaByKey)?.[key] ?? '').trim())
+        .find(Boolean) ?? null;
+};
+
+const groupStatementAccountsByCOA = (
+    sectionKey: string,
+    accounts: StatementPostingAccount[],
+    accountMetaByKey: Record<string, COAAccountMeta>,
+) => {
+    const groupsByLabel = new Map<string, StatementAccountGroup & { subgroupsByLabel: Map<string, StatementAccountGroup> }>();
+
+    accounts.forEach((account) => {
+        const meta = getAccountMeta(account, accountMetaByKey);
+        const groupLabel = getGroupLabel(meta?.group ?? account.coa_group_level2, 'Unassigned');
+        const subgroupLabel = getGroupLabel(meta?.subgroup ?? account.coa_group_level3, groupLabel);
+        const amount = getNumber(account.amount);
+        const groupKey = groupLabel.toLowerCase();
+        const subgroupKey = subgroupLabel.toLowerCase();
+
+        if (!groupsByLabel.has(groupKey)) {
+            groupsByLabel.set(groupKey, {
+                key: `${sectionKey}-l2-${groupKey}`,
+                label: groupLabel,
+                amount: 0,
+                accounts: [],
+                subgroupsByLabel: new Map(),
+            });
+        }
+
+        const group = groupsByLabel.get(groupKey);
+        if (!group) return;
+        group.amount += amount;
+        group.accounts.push(account);
+
+        if (!group.subgroupsByLabel.has(subgroupKey)) {
+            group.subgroupsByLabel.set(subgroupKey, {
+                key: `${group.key}-l3-${subgroupKey}`,
+                label: subgroupLabel,
+                amount: 0,
+                accounts: [],
+            });
+        }
+
+        const subgroup = group.subgroupsByLabel.get(subgroupKey);
+        if (!subgroup) return;
+        subgroup.amount += amount;
+        subgroup.accounts.push(account);
+    });
+
+    return [...groupsByLabel.values()].map((group) => ({
+        ...group,
+        subgroups: [...group.subgroupsByLabel.values()],
+    }));
+};
+
+const getCOAChildren = (row: COARow) => (Array.isArray(row.children) ? row.children : []);
+
+const getCOAName = (row: COARow) => String(row.coa_name ?? row.name ?? '').trim();
+
+const getCOACode = (row: COARow) => String(row.coa_code ?? row.code ?? '').trim();
+
+const getCOAId = (row: COARow) => String(row.id ?? '').trim();
+
+const buildCOAAccountMetaByKey = (rows: COARow[]) => {
+    const metaByKey: Record<string, COAAccountMeta> = {};
+    const entries: { row: COARow; ancestors: COARow[] }[] = [];
+    const rowById = new Map<string, COARow>();
+
+    const visit = (row: COARow, ancestors: COARow[]) => {
+        const rowId = getCOAId(row);
+        if (rowId) rowById.set(rowId, row);
+        entries.push({ row, ancestors });
+        getCOAChildren(row).forEach((child) => visit(child, [...ancestors, row]));
+    };
+
+    rows.forEach((row) => visit(row, []));
+
+    const getParentAncestors = (row: COARow) => {
+        const ancestors: COARow[] = [];
+        const seen = new Set<string>();
+        let parentId = String(row.parent_id ?? '').trim();
+
+        while (parentId && !seen.has(parentId)) {
+            seen.add(parentId);
+            const parent = rowById.get(parentId);
+            if (!parent) break;
+            ancestors.unshift(parent);
+            parentId = String(parent.parent_id ?? '').trim();
+        }
+
+        return ancestors;
+    };
+
+    entries.forEach(({ row, ancestors }) => {
+        const effectiveAncestors = ancestors.length > 0 ? ancestors : getParentAncestors(row);
+        const ancestorLabels = effectiveAncestors.map(getCOAName).filter(Boolean);
+        const rowLabel = getCOAName(row);
+        const meta: COAAccountMeta = {
+            type: ancestorLabels[0] ?? rowLabel ?? null,
+            group: ancestorLabels[1] ?? (ancestorLabels.length === 1 ? rowLabel : null),
+            subgroup: ancestorLabels[2] ?? (ancestorLabels.length >= 2 ? rowLabel : null),
+        };
+
+        [getCOAId(row), getCOACode(row)].filter(Boolean).forEach((key) => {
+            metaByKey[key] = meta;
+        });
+    });
+
+    return metaByKey;
+};
 
 const getTrialBalanceNet = (row: TrialBalanceRow) => getNumber(row.balance ?? row.net);
 
@@ -251,6 +413,11 @@ const reportsAPI = {
         return parseApiResponse<IncomeStatementReport>(response, 'Failed to fetch income statement');
     },
 
+    async coaTree(): Promise<COARow[]> {
+        const response = await apiFetch('/acc/coa/get_tree');
+        return parseApiResponse<COARow[]>(response, 'Failed to fetch COA tree');
+    },
+
     async exportTaxPackage(periodYyyymm: number): Promise<Blob> {
         const response = await apiFetch(`/acc/reports/export-tax-package?period_yyyymm=${periodYyyymm}`);
         if (!response.ok) {
@@ -266,6 +433,7 @@ const Reports = () => {
     const [trialBalanceRows, setTrialBalanceRows] = useState<TrialBalanceRow[]>([]);
     const [balanceSheet, setBalanceSheet] = useState<BalanceSheetReport>({});
     const [incomeStatement, setIncomeStatement] = useState<IncomeStatementReport>({});
+    const [accountMetaByKey, setAccountMetaByKey] = useState<Record<string, COAAccountMeta>>({});
     const [isLoading, setIsLoading] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -277,19 +445,22 @@ const Reports = () => {
         setIsLoading(true);
         setError(null);
         try {
-            const [tb, bs, isData] = await Promise.all([
+            const [tb, bs, isData, coaTree] = await Promise.all([
                 reportsAPI.trialBalance(periodYyyymm),
                 reportsAPI.balanceSheet(toDate),
                 reportsAPI.incomeStatement(fromDate, toDate),
+                reportsAPI.coaTree(),
             ]);
             setTrialBalanceRows(tb);
             setBalanceSheet(bs);
             setIncomeStatement(isData);
+            setAccountMetaByKey(buildCOAAccountMetaByKey(coaTree));
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to load reports.');
             setTrialBalanceRows([]);
             setBalanceSheet({});
             setIncomeStatement({});
+            setAccountMetaByKey({});
         } finally {
             setIsLoading(false);
         }
@@ -445,7 +616,7 @@ const Reports = () => {
                                             {trialBalanceRows.map((row) => (
                                                 <TRow key={String(row.account_id ?? getAccountLabel(row))}>
                                                     <TCell className="text-sm px-2 py-2">{getAccountLabel(row)}</TCell>
-                                                    <TCell className="text-sm px-2 py-2">{getTrialBalanceType(row)}</TCell>
+                                                    <TCell className="text-sm px-2 py-2">{getTrialBalanceType(row, accountMetaByKey)}</TCell>
                                                     <TCell className="text-sm px-2 py-2 text-right tabular-nums">
                                                         {formatMoney(row.debit ?? 0)}
                                                     </TCell>
@@ -490,6 +661,7 @@ const Reports = () => {
                                     sections={balanceSheetSections}
                                     emptyLabel="No balance sheet rows for this period."
                                     defaultLabel="All Balance Sheet"
+                                    accountMetaByKey={accountMetaByKey}
                                 />
                             </CardContent>
                         </Card>
@@ -513,6 +685,7 @@ const Reports = () => {
                                     sections={incomeStatementSections}
                                     emptyLabel="No income statement rows for this period."
                                     defaultLabel="All Profit & Loss"
+                                    accountMetaByKey={accountMetaByKey}
                                 />
                             </CardContent>
                         </Card>
@@ -552,10 +725,12 @@ const HierarchicalStatementReport = ({
     sections,
     emptyLabel,
     defaultLabel,
+    accountMetaByKey,
 }: {
     sections: DisplayStatementSection[];
     emptyLabel: string;
     defaultLabel: string;
+    accountMetaByKey: Record<string, COAAccountMeta>;
 }) => {
     const [selectedKey, setSelectedKey] = useState('all');
 
@@ -585,39 +760,36 @@ const HierarchicalStatementReport = ({
                 sectionKey: displaySection.key,
             });
 
-            (displaySection.section?.level2 ?? []).forEach((level2, level2Index) => {
-                const level2Accounts = (level2.level3 ?? []).flatMap((level3) => level3.posting_accounts ?? []);
-                const level2Key = `${displaySection.key}-l2-${level2Index}-${level2.coa_group_level2 ?? 'none'}`;
+            groupStatementAccountsByCOA(displaySection.key, sectionAccounts, accountMetaByKey).forEach((level2) => {
                 hierarchy.push({
-                    key: level2Key,
-                    label: getGroupLabel(level2.coa_group_level2, 'Unassigned'),
-                    amount: getNumber(level2.amount),
-                    count: level2Accounts.length,
+                    key: level2.key,
+                    label: level2.label,
+                    amount: level2.amount,
+                    count: level2.accounts.length,
                     level: 1,
-                    accounts: level2Accounts,
+                    accounts: level2.accounts,
                     sectionKey: displaySection.key,
-                    level2Name: level2.coa_group_level2 ?? null,
+                    level2Name: getFirstAccountMetaLabel(level2.accounts, accountMetaByKey, 'group'),
                 });
 
-                (level2.level3 ?? []).forEach((level3, level3Index) => {
-                    const level3Accounts = level3.posting_accounts ?? [];
+                level2.subgroups.forEach((level3) => {
                     hierarchy.push({
-                        key: `${level2Key}-l3-${level3Index}-${level3.coa_group_level3 ?? 'none'}`,
-                        label: getGroupLabel(level3.coa_group_level3, 'Unassigned'),
-                        amount: getNumber(level3.amount),
-                        count: level3Accounts.length,
+                        key: level3.key,
+                        label: level3.label,
+                        amount: level3.amount,
+                        count: level3.accounts.length,
                         level: 2,
-                        accounts: level3Accounts,
+                        accounts: level3.accounts,
                         sectionKey: displaySection.key,
-                        level2Name: level2.coa_group_level2 ?? null,
-                        level3Name: level3.coa_group_level3 ?? null,
+                        level2Name: getFirstAccountMetaLabel(level2.accounts, accountMetaByKey, 'group'),
+                        level3Name: getFirstAccountMetaLabel(level3.accounts, accountMetaByKey, 'subgroup'),
                     });
                 });
             });
         });
 
         return hierarchy;
-    }, [defaultLabel, sections]);
+    }, [accountMetaByKey, defaultLabel, sections]);
 
     useEffect(() => {
         if (!nodes.some((node) => node.key === selectedKey)) {
@@ -694,7 +866,7 @@ const HierarchicalStatementReport = ({
                                     <TCell className="px-4 py-2 font-mono text-sm">{getAccountCode(row) || '-'}</TCell>
                                     <TCell className="px-4 py-2 text-sm">{getAccountName(row) || '-'}</TCell>
                                     <TCell className="px-4 py-2 text-sm text-muted-foreground">
-                                        {getGroupLabel(row.coa_group_level3, getGroupLabel(row.coa_group_level2, '-'))}
+                                        {getPostingAccountGroup(row, accountMetaByKey)}
                                     </TCell>
                                     <TCell className="px-4 py-2 text-right font-mono text-sm tabular-nums">
                                         {formatMoney(row.amount ?? 0)}

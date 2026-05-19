@@ -11,10 +11,9 @@ import {
 } from 'src/components/ui/dialog';
 import { Input } from 'src/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'src/components/ui/select';
-import type { COAFormState, COAGroupLevel1, NormalBalance } from '../../types/type_coa';
+import type { COAFormState, NormalBalance } from '../../types/type_coa';
 import type { COATemplate } from '../../types/type_coa';
 
-export const groupOptions: COAGroupLevel1[] = ['Asset', 'Liability', 'Equity', 'Revenue', 'Expense'];
 const normalBalanceOptions: NormalBalance[] = ['Debit', 'Credit'];
 
 type ApplyTemplateDialogProps = {
@@ -107,24 +106,6 @@ export const AccountFormDialog = ({
                         />
                     </div>
                     <div className="space-y-1.5">
-                        <div className="text-xs font-medium text-muted-foreground">Type</div>
-                        <Select
-                            value={form.coa_group_level1}
-                            onValueChange={(value) => setForm((current) => ({ ...current, coa_group_level1: value as COAGroupLevel1 }))}
-                        >
-                            <SelectTrigger className="w-full">
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {groupOptions.map((option) => (
-                                    <SelectItem key={option} value={option}>
-                                        {option}
-                                    </SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
-                    <div className="space-y-1.5">
                         <div className="text-xs font-medium text-muted-foreground">Normal balance</div>
                         <Select
                             value={form.normal_balance}
@@ -141,22 +122,6 @@ export const AccountFormDialog = ({
                                 ))}
                             </SelectContent>
                         </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                        <div className="text-xs font-medium text-muted-foreground">Group</div>
-                        <Input
-                            value={form.coa_group_level2}
-                            onChange={(event) => setForm((current) => ({ ...current, coa_group_level2: event.target.value }))}
-                            placeholder="current_asset"
-                        />
-                    </div>
-                    <div className="space-y-1.5">
-                        <div className="text-xs font-medium text-muted-foreground">Subgroup</div>
-                        <Input
-                            value={form.coa_group_level3}
-                            onChange={(event) => setForm((current) => ({ ...current, coa_group_level3: event.target.value }))}
-                            placeholder="cash_and_bank"
-                        />
                     </div>
                 </div>
 

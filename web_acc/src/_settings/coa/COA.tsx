@@ -10,7 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from 'src/components/ui/input';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
 import { coaAPI } from './COA-api';
-import { AccountFormDialog, ApplyTemplateDialog, groupOptions } from './COA-dialog';
+import { AccountFormDialog, ApplyTemplateDialog } from './COA-dialog';
 import type { COAFormState, COARow, NormalBalance } from '../../types/type_coa';
 import type { COATemplate } from '../../types/type_coa';
 import { coaTemplates } from './COA-template';

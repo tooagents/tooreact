@@ -45,6 +45,8 @@ export type ApplyCoaResponse = {
     existing: number;
 };
 
+export type ApplyCOAResponse = ApplyCoaResponse;
+
 
 export type TxRow = {
     id: string;

@@ -2,6 +2,8 @@ import { apiFetch } from 'src/core/apihttp';
 import { JournalEntryPreview, unwrapJournalEntryResponse } from 'src/accounting/inbox/inbox-journal-entry';
 import { COARow, TxRow, StreamCallback, AgentChatPayload, ImportCsvResponse, AgentChatResponse } from 'src/types/type_coa';
 
+export type { TxRow };
+
 
 async function parseApiResponse<T>(response: Response, message: string): Promise<T> {
     if (!response.ok) {
