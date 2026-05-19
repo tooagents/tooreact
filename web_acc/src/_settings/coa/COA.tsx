@@ -227,15 +227,21 @@ const COA = () => {
     const archiveAccount = async (row: COARow) => {
         const accountId = getCOAId(row);
         if (!accountId) return;
+        const isDeleted = row.is_deleted === true;
         setArchivingAccount(accountId);
         setError(null);
         setMessage(null);
         try {
-            await coaAPI.deleteCOA(accountId);
-            setMessage('COA account archived.');
+            if (isDeleted) {
+                await coaAPI.updateCOA(accountId, { ...rowToForm(row), is_deleted: false });
+                setMessage('COA account restored.');
+            } else {
+                await coaAPI.deleteCOA(accountId);
+                setMessage('COA account archived.');
+            }
             await loadCOA();
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to archive COA account.');
+            setError(err instanceof Error ? err.message : `Failed to ${isDeleted ? 'restore' : 'archive'} COA account.`);
         } finally {
             setArchivingAccount(null);
         }
@@ -251,9 +257,18 @@ const COA = () => {
             const hasChildren = children.length > 0;
             const isPosting = row.is_posting === true;
             const isReadonly = row.is_readonly === true;
+            const isDeleted = row.is_deleted === true;
             const rowKey = getCOAKey(row, index);
-            const rowClassName = isPosting ? '' : 'bg-gray-50/80 dark:bg-white/[0.03]';
-            const nameClassName = !hasChildren && (level >= MAX_COA_LEVEL || isPosting) ? 'font-normal text-gray-700 dark:text-white/70' : 'font-semibold text-gray-900 dark:text-white';
+            const rowClassName = [
+                isPosting ? '' : 'bg-gray-50/80 dark:bg-white/[0.03]',
+                isDeleted ? 'bg-gray-100/80 opacity-70 dark:bg-white/[0.04]' : '',
+            ].filter(Boolean).join(' ');
+            const deletedClassName = isDeleted ? 'text-gray-400 line-through dark:text-white/40' : '';
+            const nameClassName = [
+                !hasChildren && (level >= MAX_COA_LEVEL || isPosting) ? 'font-normal text-gray-700 dark:text-white/70' : 'font-semibold text-gray-900 dark:text-white',
+                deletedClassName,
+            ].filter(Boolean).join(' ');
+            const mutedCellClassName = isDeleted ? deletedClassName : 'text-gray-700 dark:text-white/70';
 
             return [
                 <TRow key={rowKey} className={rowClassName}>
@@ -273,20 +288,20 @@ const COA = () => {
                                 )}
                             </span>
                             <span className="ml-2">
-                                <span className="font-mono text-sm text-gray-700 dark:text-white/70">{getCOACode(row) || '-'}</span>
+                                <span className={`font-mono text-sm ${isDeleted ? 'text-gray-400 dark:text-white/40' : 'text-gray-700 dark:text-white/70'}`}>{getCOACode(row) || '-'}</span>
                                 <span className="ml-2">{getCOAName(row) || '-'}</span>
                             </span>
                         </div>
                     </TCell>
-                    <TCell className={`${cellClassName} text-gray-700 dark:text-white/70`}>Level {level}</TCell>
-                    <TCell className={`${cellClassName} capitalize text-gray-700 dark:text-white/70`}>{getNormalBalance(row) || '-'}</TCell>
+                    <TCell className={`${cellClassName} ${mutedCellClassName}`}>Level {level}</TCell>
+                    <TCell className={`${cellClassName} capitalize ${mutedCellClassName}`}>{getNormalBalance(row) || '-'}</TCell>
                     <TCell className={cellClassName}>
-                        <Badge className={`rounded-full ${getCOAStatus(row).toLowerCase() === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-700'}`}>
+                        <Badge className={`rounded-full ${isDeleted ? 'bg-gray-100 text-gray-400 line-through' : getCOAStatus(row).toLowerCase() === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-700'}`}>
                             {getCOAStatus(row) || '-'}
                         </Badge>
                     </TCell>
                     <TCell className={cellClassName}>
-                        <Badge className={`rounded-full ${isPosting ? 'bg-sky-100 text-sky-700' : 'bg-gray-100 text-gray-700'}`}>
+                        <Badge className={`rounded-full ${isDeleted ? 'bg-gray-100 text-gray-400 line-through' : isPosting ? 'bg-sky-100 text-sky-700' : 'bg-gray-100 text-gray-700'}`}>
                             {isPosting ? 'Posting' : 'Header'}
                         </Badge>
                     </TCell>
@@ -310,13 +325,18 @@ const COA = () => {
                                             <Icon icon="solar:pen-new-square-broken" height={18} />
                                             <span>Edit</span>
                                         </DropdownMenuItem>
-                                        <DropdownMenuItem className="flex cursor-pointer items-center gap-3 text-red-600 focus:text-red-600" onClick={() => archiveAccount(row)}>
+                                        <DropdownMenuItem
+                                            className={`flex cursor-pointer items-center gap-3 ${isDeleted ? 'text-emerald-600 focus:text-emerald-600' : 'text-red-600 focus:text-red-600'}`}
+                                            onClick={() => archiveAccount(row)}
+                                        >
                                             {archivingAccount === accountId ? (
                                                 <LoadingSpinner size="sm" variant="dots" />
+                                            ) : isDeleted ? (
+                                                <Icon icon="solar:refresh-circle-outline" height={18} />
                                             ) : (
                                                 <Icon icon="solar:trash-bin-minimalistic-outline" height={18} />
                                             )}
-                                            <span>Archive</span>
+                                            <span>{isDeleted ? 'Restore' : 'Archive'}</span>
                                         </DropdownMenuItem>
                                     </DropdownMenuContent>
                                 </DropdownMenu>

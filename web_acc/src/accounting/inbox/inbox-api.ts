@@ -1,55 +1,12 @@
 import { apiFetch } from 'src/core/apihttp';
 import { JournalEntryPreview, unwrapJournalEntryResponse } from 'src/accounting/inbox/inbox-journal-entry';
+import { COARow, TxRow, StreamCallback, AgentChatPayload, ImportCsvResponse, AgentChatResponse } from 'src/types/type_coa';
 
-export type AccountRow = {
-    id: string;
-    coa_code?: string | null;
-    coa_posting_name?: string | null;
-    coa_group_level1?: string | null;
-    coa_group_level2?: string | null;
-    coa_group_level3?: string | null;
-    normal_balance?: string | null;
-    is_posting?: boolean | null;
-    is_active?: boolean | null;
-    [key: string]: unknown;
-};
-
-export type TxRow = {
-    id: string;
-    txn_date?: string;
-    description?: string;
-    amount?: number | string;
-    status?: string;
-    journal_id?: string | null;
-    journal_entry?: JournalEntryPreview | null;
-    is_deleted?: boolean | null;
-    [key: string]: unknown;
-};
-
-type ApplyCoaResponse = {
-    created: number;
-    existing: number;
-};
-
-type ImportCsvResponse = {
-    imported_count: number;
-    duplicate_count: number;
-};
-
-type AgentChatResponse = Record<string, unknown>;
-
-type AgentChatPayload = {
-    message: string;
-};
-
-type StreamCallback = (event: string, data: Record<string, unknown>) => void;
 
 async function parseApiResponse<T>(response: Response, message: string): Promise<T> {
     if (!response.ok) {
         const details = await response.text().catch(() => '');
-        throw new Error(
-            `${message}: ${response.status} ${response.statusText}${details ? ` - ${details}` : ''}`,
-        );
+        throw new Error(`${message}: ${response.status} ${response.statusText}${details ? ` - ${details}` : ''}`,);
     }
 
     return response.json();
@@ -173,15 +130,15 @@ export const inboxAPI = {
     },
 
 
-    async listAccounts(): Promise<AccountRow[]> {
+    async listAccounts(): Promise<COARow[]> {
         const response = await apiFetch('/acc/coa');
-        return parseApiResponse<AccountRow[]>(response, 'Failed to fetch COA accounts');
+        return parseApiResponse<COARow[]>(response, 'Failed to fetch COA accounts');
     },
 
-    async applyGenericCoa(): Promise<ApplyCoaResponse> {
-        const response = await apiFetch('/acc/coa/templates/generic/apply', { method: 'POST' });
-        return parseApiResponse<ApplyCoaResponse>(response, 'Failed to apply COA');
-    },
+    // async applyGenericCoa(): Promise<ApplyCoaResponse> {
+    //     const response = await apiFetch('/acc/coa/templates/generic/apply', { method: 'POST' });
+    //     return parseApiResponse<ApplyCoaResponse>(response, 'Failed to apply COA');
+    // },
 
 
 };

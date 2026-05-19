@@ -1,3 +1,5 @@
+import { JournalEntryPreview } from "src/accounting/inbox/inbox-journal-entry";
+
 export type COATemplate = {
     key: string;
     name: string;
@@ -37,8 +39,36 @@ export type COAFormState = {
     is_readonly?: boolean;
 };
 
-export type ApplyCOAResponse = {
-    template?: string;
-    created?: number;
-    existing?: number;
+
+export type ApplyCoaResponse = {
+    created: number;
+    existing: number;
 };
+
+
+export type TxRow = {
+    id: string;
+    txn_date?: string;
+    description?: string;
+    amount?: number | string;
+    status?: string;
+    journal_id?: string | null;
+    journal_entry?: JournalEntryPreview | null;
+    is_deleted?: boolean | null;
+    [key: string]: unknown;
+};
+
+
+
+export type ImportCsvResponse = {
+    imported_count: number;
+    duplicate_count: number;
+};
+
+export type AgentChatResponse = Record<string, unknown>;
+    
+export type AgentChatPayload = {
+    message: string;
+};
+
+export type StreamCallback = (event: string, data: Record<string, unknown>) => void;
