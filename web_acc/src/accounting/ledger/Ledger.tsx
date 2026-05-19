@@ -19,7 +19,7 @@ const pageSize = 20;
 
 const getAccountLabel = (account: AccountRow) => {
     const code = String(account.coa_code ?? account.account_code ?? account.code ?? '').trim();
-    const name = String(account.coa_posting_name ?? account.account_name ?? account.name ?? account.title ?? '').trim();
+    const name = String(account.coa_name ?? account.account_name ?? account.name ?? account.title ?? '').trim();
 
     if (code && name) return `${code} - ${name}`;
     if (name) return name;
@@ -29,7 +29,7 @@ const getAccountLabel = (account: AccountRow) => {
 
 const getLineAccountLabel = (line: JournalEntryLine, accountLabelById: Record<string, string>) => {
     const accountCode = String(line.coa_code ?? line.account_code ?? '').trim();
-    const accountName = String(line.coa_posting_name ?? line.account_name ?? '').trim();
+    const accountName = String(line.coa_name ?? line.account_name ?? '').trim();
     const accountLabel = String(line.account_label ?? '').trim();
     const accountId = String(line.account_id ?? '').trim();
 
@@ -82,14 +82,14 @@ const getEmbeddedLedgerEntry = (row: LedgerRow): JournalEntryRow | null => {
 };
 
 const getLedgerAccountKey = (row: LedgerRow) => {
-    const value = row.account_id ?? row.coa_code ?? row.code ?? row.coa_posting_name ?? row.name;
+    const value = row.account_id ?? row.coa_code ?? row.code ?? row.coa_name ?? row.name;
     return String(value ?? '').trim();
 };
 
 const getLedgerAccountLabel = (row: LedgerRow, accountLabelById: Record<string, string>) => {
     const accountId = String(row.account_id ?? '').trim();
     if (accountId && accountLabelById[accountId]) return accountLabelById[accountId];
-    return [row.coa_code ?? row.code, row.coa_posting_name ?? row.name].filter(Boolean).join(' ') || accountId || '-';
+    return [row.coa_code ?? row.code, row.coa_name ?? row.name].filter(Boolean).join(' ') || accountId || '-';
 };
 
 const getNumber = (value: unknown) => {

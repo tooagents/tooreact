@@ -15,7 +15,7 @@ const BCrumb = [{ to: '/', title: 'Home' }, { title: 'Reports' }];
 type TrialBalanceRow = {
     account_id?: string | null;
     coa_code?: string | null;
-    coa_posting_name?: string | null;
+    coa_name?: string | null;
     coa_group_level1?: string | null;
     coa_group_level2?: string | null;
     coa_group_level3?: string | null;
@@ -32,7 +32,7 @@ type TrialBalanceRow = {
 type StatementPostingAccount = {
     account_id?: string | null;
     coa_code?: string | null;
-    coa_posting_name?: string | null;
+    coa_name?: string | null;
     coa_group_level1?: string | null;
     coa_group_level2?: string | null;
     coa_group_level3?: string | null;
@@ -110,7 +110,7 @@ const getNumber = (value: unknown) => {
 
 const getAccountCode = (row: StatementPostingAccount | TrialBalanceRow) => String(row.coa_code ?? row.code ?? '').trim();
 
-const getAccountName = (row: StatementPostingAccount | TrialBalanceRow) => String(row.coa_posting_name ?? row.name ?? '').trim();
+const getAccountName = (row: StatementPostingAccount | TrialBalanceRow) => String(row.coa_name ?? row.name ?? '').trim();
 
 const getAccountLabel = (row: StatementPostingAccount | TrialBalanceRow) => {
     const code = getAccountCode(row);
@@ -148,7 +148,7 @@ const getSignedClass = (value: number) => {
 };
 
 const getReportRowKey = (section: string, row: StatementPostingAccount, index: number) =>
-    `${section}-${row.account_id ?? row.coa_code ?? row.code ?? row.coa_posting_name ?? row.name ?? index}`;
+    `${section}-${row.account_id ?? row.coa_code ?? row.code ?? row.coa_name ?? row.name ?? index}`;
 
 const titleCase = (value: string) =>
     value

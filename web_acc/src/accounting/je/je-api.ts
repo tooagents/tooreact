@@ -3,7 +3,7 @@ import { apiFetch } from 'src/core/apihttp';
 export type AccountRow = {
     id: string;
     coa_code?: string | null;
-    coa_posting_name?: string | null;
+    coa_name?: string | null;
     coa_group_level1?: string | null;
     coa_group_level2?: string | null;
     coa_group_level3?: string | null;
@@ -28,7 +28,7 @@ export type JournalEntryLine = {
     amount?: number | string | null;
     account_id?: string | null;
     coa_code?: string | null;
-    coa_posting_name?: string | null;
+    coa_name?: string | null;
     account_code?: string | null;
     account_name?: string | null;
     account_label?: string | null;
@@ -72,7 +72,7 @@ export type LedgerRow = {
     lineId?: string | null;
     account_id?: string | null;
     coa_code?: string | null;
-    coa_posting_name?: string | null;
+    coa_name?: string | null;
     entry_date?: string | null;
     code?: string | null;
     name?: string | null;

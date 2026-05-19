@@ -101,8 +101,8 @@ export const AccountFormDialog = ({
                         <div className="text-xs font-medium text-muted-foreground">Name</div>
                         <Input
                             required
-                            value={form.coa_posting_name}
-                            onChange={(event) => setForm((current) => ({ ...current, coa_posting_name: event.target.value }))}
+                            value={form.coa_name}
+                            onChange={(event) => setForm((current) => ({ ...current, coa_name: event.target.value }))}
                             placeholder="Bank"
                         />
                     </div>

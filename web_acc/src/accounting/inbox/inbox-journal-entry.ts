@@ -6,7 +6,7 @@ export type JournalEntryLine = {
     amount?: number | string | null;
     account_id?: string | null;
     coa_code?: string | null;
-    coa_posting_name?: string | null;
+    coa_name?: string | null;
     account_code?: string | null;
     account_name?: string | null;
     account_label?: string | null;
@@ -79,7 +79,7 @@ export const getEmbeddedJournalEntry = (row: TxRow | undefined): JournalEntryPre
 
 export const formatJournalLineAccount = (line: JournalEntryLine) => {
     const accountCode = String(line.coa_code ?? line.account_code ?? '').trim();
-    const accountName = String(line.coa_posting_name ?? line.account_name ?? '').trim();
+    const accountName = String(line.coa_name ?? line.account_name ?? '').trim();
     const accountLabel = String(line.account_label ?? '').trim();
     const accountId = String(line.account_id ?? '').trim();
 
