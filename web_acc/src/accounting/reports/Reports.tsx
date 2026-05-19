@@ -39,6 +39,15 @@ type ReportLedgerRow = {
     entry_id?: string | null;
     je_id?: string | null;
     journalEntryId?: string | null;
+    entry_no?: number | string | null;
+    journal_entry?: ReportJournalEntryRow | null;
+    journalEntry?: ReportJournalEntryRow | null;
+    entry?: ReportJournalEntryRow | null;
+    je?: ReportJournalEntryRow | null;
+    journal_entry_line_id?: string | null;
+    journalEntryLineId?: string | null;
+    line_id?: string | null;
+    lineId?: string | null;
     account_id?: string | null;
     coa_code?: string | null;
     coa_name?: string | null;
@@ -51,6 +60,19 @@ type ReportLedgerRow = {
     credit?: number | string | null;
     memo?: string | null;
     description?: string | null;
+    [key: string]: unknown;
+};
+
+type ReportJournalEntryLine = {
+    id?: string;
+    [key: string]: unknown;
+};
+
+type ReportJournalEntryRow = {
+    id: string;
+    entry_no?: number | string | null;
+    memo?: string | null;
+    lines?: ReportJournalEntryLine[];
     [key: string]: unknown;
 };
 
@@ -508,8 +530,58 @@ const getLedgerAccountLookupKeys = (row: ReportLedgerRow) =>
         .map((value) => String(value ?? '').trim())
         .filter(Boolean);
 
-const getLedgerJournalEntryLabel = (row: ReportLedgerRow) => {
-    const value = row.journal_entry_id ?? row.journal_id ?? row.entry_id ?? row.je_id ?? row.journalEntryId;
+const getEmbeddedLedgerEntry = (row: ReportLedgerRow) => row.journal_entry ?? row.journalEntry ?? row.entry ?? row.je ?? null;
+
+const getLedgerJournalEntryId = (row: ReportLedgerRow) => {
+    const embeddedEntry = getEmbeddedLedgerEntry(row);
+    const value =
+        embeddedEntry?.id ??
+        row.journal_entry_id ??
+        row.journal_id ??
+        row.entry_id ??
+        row.je_id ??
+        row.journalEntryId;
+
+    return String(value ?? '').trim() || null;
+};
+
+const getLedgerLineId = (row: ReportLedgerRow) => {
+    const value =
+        row.journal_entry_line_id ??
+        row.journalEntryLineId ??
+        row.line_id ??
+        row.lineId ??
+        row.id;
+
+    return String(value ?? '').trim() || null;
+};
+
+const getJournalEntryLabel = (entry: ReportJournalEntryRow | null | undefined) => {
+    const entryNo = String(entry?.entry_no ?? '').trim();
+    return entryNo ? `JE-${entryNo}` : null;
+};
+
+const getLedgerJournalEntryLabel = (
+    row: ReportLedgerRow,
+    entryById: Map<string, ReportJournalEntryRow>,
+    entryByLineId: Map<string, ReportJournalEntryRow>,
+) => {
+    const entryNo =
+        row.entry_no ??
+        row.journal_entry?.entry_no ??
+        row.journalEntry?.entry_no ??
+        row.entry?.entry_no ??
+        row.je?.entry_no;
+    const entryNoText = String(entryNo ?? '').trim();
+    if (entryNoText) return `JE-${entryNoText}`;
+
+    const matchedEntry =
+        entryById.get(getLedgerJournalEntryId(row) ?? '') ??
+        entryByLineId.get(getLedgerLineId(row) ?? '');
+    const matchedEntryLabel = getJournalEntryLabel(matchedEntry);
+    if (matchedEntryLabel) return matchedEntryLabel;
+
+    const value = getLedgerJournalEntryId(row);
     const text = String(value ?? '').trim();
     return text ? text.slice(0, 8) : '-';
 };
@@ -622,6 +694,11 @@ const reportsAPI = {
         return Array.isArray(data) ? data : (data.rows ?? []);
     },
 
+    async journalEntries(): Promise<ReportJournalEntryRow[]> {
+        const response = await apiFetch('/acc/je/getlist?limit=200');
+        return parseApiResponse<ReportJournalEntryRow[]>(response, 'Failed to fetch journal entries');
+    },
+
     async exportTaxPackage(periodYyyymm: number): Promise<Blob> {
         const response = await apiFetch(`/acc/reports/export-tax-package?period_yyyymm=${periodYyyymm}`);
         if (!response.ok) {
@@ -638,6 +715,7 @@ const Reports = () => {
     const [balanceSheet, setBalanceSheet] = useState<BalanceSheetReport>({});
     const [incomeStatement, setIncomeStatement] = useState<IncomeStatementReport>({});
     const [ledgerRows, setLedgerRows] = useState<ReportLedgerRow[]>([]);
+    const [journalEntries, setJournalEntries] = useState<ReportJournalEntryRow[]>([]);
     const [accountMetaByKey, setAccountMetaByKey] = useState<Record<string, COAAccountMeta>>({});
     const [coaRows, setCOARows] = useState<COARow[]>([]);
     const [selectedTrialBalanceKey, setSelectedTrialBalanceKey] = useState<string | null>(null);
@@ -652,17 +730,19 @@ const Reports = () => {
         setIsLoading(true);
         setError(null);
         try {
-            const [tb, bs, isData, coaTree, ledger] = await Promise.all([
+            const [tb, bs, isData, coaTree, ledger, entries] = await Promise.all([
                 reportsAPI.trialBalance(periodYyyymm),
                 reportsAPI.balanceSheet(toDate),
                 reportsAPI.incomeStatement(fromDate, toDate),
                 reportsAPI.coaTree(),
                 reportsAPI.ledgerRows(),
+                reportsAPI.journalEntries(),
             ]);
             setTrialBalanceRows(tb);
             setBalanceSheet(bs);
             setIncomeStatement(isData);
             setLedgerRows(ledger);
+            setJournalEntries(entries);
             const normalizedCOATree = normalizeCOATree(coaTree);
             setCOARows(normalizedCOATree);
             setAccountMetaByKey(buildCOAAccountMetaByKey(normalizedCOATree));
@@ -672,6 +752,7 @@ const Reports = () => {
             setBalanceSheet({});
             setIncomeStatement({});
             setLedgerRows([]);
+            setJournalEntries([]);
             setAccountMetaByKey({});
             setCOARows([]);
         } finally {
@@ -713,6 +794,26 @@ const Reports = () => {
     }, [fromDate, ledgerRows, selectedTrialBalanceRow, toDate]);
     const selectedTrialBalanceLedgerDebit = selectedTrialBalanceLedgerRows.reduce((sum, row) => sum + getLedgerDebitAmount(row), 0);
     const selectedTrialBalanceLedgerCredit = selectedTrialBalanceLedgerRows.reduce((sum, row) => sum + getLedgerCreditAmount(row), 0);
+
+    const journalEntryById = useMemo(() => {
+        const map = new Map<string, ReportJournalEntryRow>();
+        journalEntries.forEach((entry) => {
+            const entryId = String(entry.id ?? '').trim();
+            if (entryId) map.set(entryId, entry);
+        });
+        return map;
+    }, [journalEntries]);
+
+    const journalEntryByLineId = useMemo(() => {
+        const map = new Map<string, ReportJournalEntryRow>();
+        journalEntryById.forEach((entry) => {
+            (entry.lines ?? []).forEach((line) => {
+                const lineId = String(line.id ?? '').trim();
+                if (lineId) map.set(lineId, entry);
+            });
+        });
+        return map;
+    }, [journalEntryById]);
 
     useEffect(() => {
         if (!selectedTrialBalanceKey) return;
@@ -835,7 +936,7 @@ const Reports = () => {
                                     <div className="mt-1 text-xs text-muted-foreground">Account balances for {periodMonth}</div>
                                 </div>
                             </CardHeader>
-                            <CardContent className="grid grid-cols-1 border-t border-ld p-0 xl:grid-cols-[minmax(0,62%)_minmax(320px,38%)]">
+                            <CardContent className="grid grid-cols-1 border-t border-ld p-0 xl:grid-cols-[minmax(0,50%)_minmax(320px,50%)]">
                                 <div className="min-w-0 overflow-x-auto xl:border-r xl:border-ld">
                                     <Table>
                                         <THeader>
@@ -987,7 +1088,9 @@ const Reports = () => {
                                                         {selectedTrialBalanceLedgerRows.map((row, index) => (
                                                             <TRow key={String(row.id ?? `${row.entry_date ?? 'ledger'}-${index}`)}>
                                                                 <TCell className="px-2 py-2 text-xs">{row.entry_date || '-'}</TCell>
-                                                                <TCell className="px-2 py-2 font-mono text-xs">{getLedgerJournalEntryLabel(row)}</TCell>
+                                                                <TCell className="px-2 py-2 font-mono text-xs">
+                                                                    {getLedgerJournalEntryLabel(row, journalEntryById, journalEntryByLineId)}
+                                                                </TCell>
                                                                 <TCell className="px-2 py-2 text-xs">
                                                                     <div className="line-clamp-2 whitespace-normal">
                                                                         {String(row.memo ?? row.description ?? '-')}
