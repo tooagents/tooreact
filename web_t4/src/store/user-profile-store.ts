@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { meOrgAPI } from 'src/_settings/me/me-org-api';
+import { meOrgAPI } from 'src/settings/me/me-org-api';
 
 type UserProfileState = {
     fbName: string;

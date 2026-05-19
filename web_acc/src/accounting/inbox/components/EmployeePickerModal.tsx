@@ -5,7 +5,7 @@ import { Input } from 'src/components/ui/input';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
 import { Checkbox } from 'src/components/ui/checkbox';
 import LoadingSpinner from 'src/components/shared/LoadingSpinner';
-import { useEmployees } from 'src/_settings/employees/useEmployees';
+import { useEmployees } from 'src/settings/employees/useEmployees';
 import { Employee } from 'src/types/employee';
 
 type EmployeePickerModalProps = {

@@ -3,7 +3,7 @@ import BreadcrumbComp from 'src/_layouts/shared/breadcrumb/BreadcrumbComp';
 import StripedRowTable from 'src/components/table/StripedRowTable';
 import HoverTable from 'src/components/table/HoverTable';
 import CheckboxTable from 'src/components/table/CheckboxTable';
-import { EmployeeDataTable } from 'src/_settings/employees/components/EmployeeTable';
+import { EmployeeDataTable } from 'src/settings/employees/components/EmployeeTable';
 import { EmployeesData } from 'src/components/table/data_default';
 const BCrumb = [
   {

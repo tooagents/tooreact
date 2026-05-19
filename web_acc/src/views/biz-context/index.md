@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { clientsAPI } from 'src/_settings/clients/clients-api';
+import { clientsAPI } from 'src/settings/clients/clients-api';
 import { userAPI } from 'src/api/user';
 
 export interface BizClient {

@@ -9,7 +9,7 @@ import {
     DialogHeader,
     DialogTitle,
 } from 'src/components/ui/dialog';
-import { clientsAPI } from 'src/_settings/clients/clients-api';
+import { clientsAPI } from 'src/settings/clients/clients-api';
 import type { ClientDB } from 'src/types/type_client';
 import LoadingSpinner from 'src/components/shared/LoadingSpinner';
 

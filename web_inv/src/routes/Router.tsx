@@ -34,14 +34,14 @@ const MarketingHome = Loadable(lazy(() => import('src/_marketing/MarketingHome')
 const Modern = Loadable(lazy(() => import('src/_overview/Modern')));
 
 /* =========================Pages========================= */
-const UserProfile = Loadable(lazy(() => import('src/_settings/me/Me')));
-const Clients = Loadable(lazy(() => import('src/_settings/clients/Clients')));
-const BillingSubscription = Loadable(lazy(() => import('src/_settings/billing/BillingSubscription')));
-const BillingSuccess = Loadable(lazy(() => import('src/_settings/billing/BillingSuccess')));
-const BillingCancel = Loadable(lazy(() => import('src/_settings/billing/BillingCancel')));
+const UserProfile = Loadable(lazy(() => import('src/settings/me/Me')));
+const Clients = Loadable(lazy(() => import('src/settings/clients/Clients')));
+const BillingSubscription = Loadable(lazy(() => import('src/settings/billing/BillingSubscription')));
+const BillingSuccess = Loadable(lazy(() => import('src/settings/billing/BillingSuccess')));
+const BillingCancel = Loadable(lazy(() => import('src/settings/billing/BillingCancel')));
 
 /* =========================Biz========================= */
-const Employee = Loadable(lazy(() => import('src/_settings/employees/Employee')));
+const Employee = Loadable(lazy(() => import('src/settings/employees/Employee')));
 const PayrollScheduleEntrance = Loadable(lazy(() => import('src/accounting/schedule/PayrollSchedule')));
 const PayrollHistoryList = Loadable(lazy(() => import('src/accounting/history/PayrollHistoryList')));
 const PayrollHistoryDetail = Loadable(lazy(() => import('src/accounting/history/PayrollHistoryDetail')));

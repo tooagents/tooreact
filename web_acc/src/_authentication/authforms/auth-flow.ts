@@ -1,7 +1,7 @@
 import type { NavigateFunction } from "react-router-dom";
 
-import { clientsAPI } from "src/_settings/clients/clients-api";
-import type { InterfaceBE } from "src/_settings/clients/clients-api";
+import { clientsAPI } from "src/settings/clients/clients-api";
+import type { InterfaceBE } from "src/settings/clients/clients-api";
 import { config } from "src/config";
 import { apiFetch } from "src/core/apihttp";
 import { getAccessToken, supabase } from "src/core/supabase";

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { employeeAPI } from 'src/_settings/employees/employee-api';
+import { employeeAPI } from 'src/settings/employees/employee-api';
 import { useClientStore } from 'src/store/client-store';
 import { Employee } from 'src/types/employee';
 

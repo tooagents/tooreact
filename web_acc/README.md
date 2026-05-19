@@ -136,12 +136,12 @@ To learn React, check out the [React documentation](https://reactjs.org/).
 验收：登录后首页能拿到 active client，header 显示正确。
 
 只替换 Clients.tsx
-改动文件：src/_settings/clients/Clients.tsx
+改动文件：src/settings/clients/Clients.tsx
 把 useBiz() 改为 useBizStore()。
 验收：勾选切换、新增、删除后 active client 行为正确。
 
 替换业务依赖点
-改动文件：src/_settings/employees/useEmployees.ts, src/accounting/PayrollEntry.tsx 等
+改动文件：src/settings/employees/useEmployees.ts, src/accounting/PayrollEntry.tsx 等
 全部从 store 读 activeBizId。
 验收：不同模块切换 client 后数据同步刷新。
 

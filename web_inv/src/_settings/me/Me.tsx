@@ -4,7 +4,7 @@ import { Icon } from "@iconify/react/dist/iconify.js"
 import BreadcrumbComp from "src/_layouts/shared/breadcrumb/BreadcrumbComp";
 import CardBox from "src/components/shared/CardBox";
 import profileImg from "src/assets/images/profile/user-1.jpg"
-import { meOrgAPI } from "src/_settings/me/me-org-api";
+import { meOrgAPI } from "src/settings/me/me-org-api";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "src/components/ui/dialog";
 import { Button } from "src/components/ui/button";
 import MeModal from "./MeModal";

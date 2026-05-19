@@ -11,7 +11,7 @@ import {
     DialogFooter,
 } from "src/components/ui/dialog";
 import { Alert, AlertDescription } from "src/components/ui/alert";
-import { employeeAPI } from "src/_settings/employees/employee-api";
+import { employeeAPI } from "src/settings/employees/employee-api";
 import { Employee } from "src/types/employee";
 import LoadingSpinner from "src/components/shared/LoadingSpinner";
 import { useClientStore } from "src/store/client-store";

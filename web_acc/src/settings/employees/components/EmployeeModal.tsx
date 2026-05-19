@@ -3,7 +3,7 @@ import { Button } from 'src/components/ui/button';
 import { Input } from 'src/components/ui/input';
 import { Label } from 'src/components/ui/label';
 import {Dialog,DialogContent,DialogFooter,DialogHeader,DialogTitle,} from 'src/components/ui/dialog';
-import { employeeAPI } from 'src/_settings/employees/employee-api';
+import { employeeAPI } from 'src/settings/employees/employee-api';
 import { Employee } from 'src/types/employee';
 import LoadingSpinner from 'src/components/shared/LoadingSpinner';
 

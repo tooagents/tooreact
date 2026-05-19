@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import BreadcrumbComp from 'src/_layouts/shared/breadcrumb/BreadcrumbComp';
-import { EmployeeDataTable } from 'src/_settings/employees/components/EmployeeTable';
+import { EmployeeDataTable } from 'src/settings/employees/components/EmployeeTable';
 import EmployeeFormModal from './components/EmployeeModal';
 import LoadingSpinner from 'src/components/shared/LoadingSpinner';
 import { Button } from 'src/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from 'src/components/ui/dialog';
-import { useEmployees } from 'src/_settings/employees/useEmployees';
-import { employeeAPI } from 'src/_settings/employees/employee-api';
+import { useEmployees } from 'src/settings/employees/useEmployees';
+import { employeeAPI } from 'src/settings/employees/employee-api';
 import { Employee } from 'src/types/employee';
 
 const BCrumb = [
