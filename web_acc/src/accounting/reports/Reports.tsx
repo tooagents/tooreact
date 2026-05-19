@@ -32,6 +32,28 @@ type TrialBalanceRow = {
     balance?: number | string | null;
 };
 
+type ReportLedgerRow = {
+    id?: string;
+    journal_entry_id?: string | null;
+    journal_id?: string | null;
+    entry_id?: string | null;
+    je_id?: string | null;
+    journalEntryId?: string | null;
+    account_id?: string | null;
+    coa_code?: string | null;
+    coa_name?: string | null;
+    code?: string | null;
+    name?: string | null;
+    entry_date?: string | null;
+    line_type?: string | null;
+    amount?: number | string | null;
+    debit?: number | string | null;
+    credit?: number | string | null;
+    memo?: string | null;
+    description?: string | null;
+    [key: string]: unknown;
+};
+
 type StatementPostingAccount = {
     account_id?: string | null;
     coa_code?: string | null;
@@ -446,7 +468,61 @@ const buildCOAAccountMetaByKey = (rows: COARow[]) => {
     return metaByKey;
 };
 
-const getTrialBalanceNet = (row: TrialBalanceRow) => getNumber(row.balance ?? row.net);
+const getTrialBalanceNet = (row: TrialBalanceRow) => {
+    const explicitBalance = row.balance ?? row.net;
+    if (explicitBalance !== undefined && explicitBalance !== null) return getNumber(explicitBalance);
+    return getNumber(row.debit) - getNumber(row.credit);
+};
+
+const getTrialBalanceDebitBalance = (row: TrialBalanceRow) => Math.max(getTrialBalanceNet(row), 0);
+
+const getTrialBalanceCreditBalance = (row: TrialBalanceRow) => Math.max(-getTrialBalanceNet(row), 0);
+
+const formatTrialBalanceAmount = (value: number) => (Math.abs(value) < 0.005 ? '-' : formatMoney(value));
+
+const getTrialBalanceRowKey = (row: TrialBalanceRow) =>
+    String(row.account_id ?? row.coa_code ?? row.code ?? getAccountLabel(row));
+
+const getTrialBalanceSide = (row: TrialBalanceRow) => {
+    const net = getTrialBalanceNet(row);
+    if (Math.abs(net) < 0.005) return 'Zero';
+    return net > 0 ? 'Debit' : 'Credit';
+};
+
+const getTrialBalanceNormalBalance = (row: TrialBalanceRow) => {
+    const normalBalance = String(row.normal_balance ?? '').trim().toLowerCase();
+    if (normalBalance === 'debit' || normalBalance === 'credit') return titleCase(normalBalance);
+    return '-';
+};
+
+const hasUnexpectedTrialBalanceSide = (row: TrialBalanceRow) => {
+    const normalBalance = getTrialBalanceNormalBalance(row).toLowerCase();
+    const side = getTrialBalanceSide(row).toLowerCase();
+    if (normalBalance !== 'debit' && normalBalance !== 'credit') return false;
+    if (side === 'zero') return false;
+    return normalBalance !== side;
+};
+
+const getLedgerAccountLookupKeys = (row: ReportLedgerRow) =>
+    [row.account_id, row.coa_code, row.code, row.coa_name, row.name]
+        .map((value) => String(value ?? '').trim())
+        .filter(Boolean);
+
+const getLedgerJournalEntryLabel = (row: ReportLedgerRow) => {
+    const value = row.journal_entry_id ?? row.journal_id ?? row.entry_id ?? row.je_id ?? row.journalEntryId;
+    const text = String(value ?? '').trim();
+    return text ? text.slice(0, 8) : '-';
+};
+
+const getLedgerDebitAmount = (row: ReportLedgerRow) => {
+    if (row.debit !== undefined) return getNumber(row.debit);
+    return String(row.line_type ?? '').toLowerCase() === 'debit' ? getNumber(row.amount) : 0;
+};
+
+const getLedgerCreditAmount = (row: ReportLedgerRow) => {
+    if (row.credit !== undefined) return getNumber(row.credit);
+    return String(row.line_type ?? '').toLowerCase() === 'credit' ? getNumber(row.amount) : 0;
+};
 
 const getSectionTotal = (
     reportTotals: Record<string, number | string | null | undefined> | undefined,
@@ -537,6 +613,15 @@ const reportsAPI = {
         return parseApiResponse<COARow[]>(response, 'Failed to fetch COA tree');
     },
 
+    async ledgerRows(): Promise<ReportLedgerRow[]> {
+        const response = await apiFetch('/acc/ledger/general');
+        const data = await parseApiResponse<{ rows?: ReportLedgerRow[] } | ReportLedgerRow[]>(
+            response,
+            'Failed to fetch general ledger',
+        );
+        return Array.isArray(data) ? data : (data.rows ?? []);
+    },
+
     async exportTaxPackage(periodYyyymm: number): Promise<Blob> {
         const response = await apiFetch(`/acc/reports/export-tax-package?period_yyyymm=${periodYyyymm}`);
         if (!response.ok) {
@@ -552,8 +637,10 @@ const Reports = () => {
     const [trialBalanceRows, setTrialBalanceRows] = useState<TrialBalanceRow[]>([]);
     const [balanceSheet, setBalanceSheet] = useState<BalanceSheetReport>({});
     const [incomeStatement, setIncomeStatement] = useState<IncomeStatementReport>({});
+    const [ledgerRows, setLedgerRows] = useState<ReportLedgerRow[]>([]);
     const [accountMetaByKey, setAccountMetaByKey] = useState<Record<string, COAAccountMeta>>({});
     const [coaRows, setCOARows] = useState<COARow[]>([]);
+    const [selectedTrialBalanceKey, setSelectedTrialBalanceKey] = useState<string | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -565,15 +652,17 @@ const Reports = () => {
         setIsLoading(true);
         setError(null);
         try {
-            const [tb, bs, isData, coaTree] = await Promise.all([
+            const [tb, bs, isData, coaTree, ledger] = await Promise.all([
                 reportsAPI.trialBalance(periodYyyymm),
                 reportsAPI.balanceSheet(toDate),
                 reportsAPI.incomeStatement(fromDate, toDate),
                 reportsAPI.coaTree(),
+                reportsAPI.ledgerRows(),
             ]);
             setTrialBalanceRows(tb);
             setBalanceSheet(bs);
             setIncomeStatement(isData);
+            setLedgerRows(ledger);
             const normalizedCOATree = normalizeCOATree(coaTree);
             setCOARows(normalizedCOATree);
             setAccountMetaByKey(buildCOAAccountMetaByKey(normalizedCOATree));
@@ -582,6 +671,7 @@ const Reports = () => {
             setTrialBalanceRows([]);
             setBalanceSheet({});
             setIncomeStatement({});
+            setLedgerRows([]);
             setAccountMetaByKey({});
             setCOARows([]);
         } finally {
@@ -593,10 +683,50 @@ const Reports = () => {
         void loadReports();
     }, [periodMonth]);
 
-    const tbDebit = trialBalanceRows.reduce((sum, row) => sum + getNumber(row.debit), 0);
-    const tbCredit = trialBalanceRows.reduce((sum, row) => sum + getNumber(row.credit), 0);
+    const trialBalanceDisplayRows = useMemo(
+        () =>
+            [...trialBalanceRows].sort((a, b) =>
+                getAccountCode(a).localeCompare(getAccountCode(b), undefined, { numeric: true }),
+            ),
+        [trialBalanceRows],
+    );
+    const selectedTrialBalanceRow = useMemo(
+        () => trialBalanceDisplayRows.find((row) => getTrialBalanceRowKey(row) === selectedTrialBalanceKey) ?? null,
+        [selectedTrialBalanceKey, trialBalanceDisplayRows],
+    );
+    const selectedTrialBalanceLedgerRows = useMemo(() => {
+        if (!selectedTrialBalanceRow) return [];
+
+        const selectedKeys = new Set([
+            ...getAccountLookupKeys(selectedTrialBalanceRow),
+            getAccountName(selectedTrialBalanceRow),
+        ].filter(Boolean));
+
+        return ledgerRows
+            .filter((row) => {
+                const rowDate = String(row.entry_date ?? '').slice(0, 10);
+                const matchesDate = (!fromDate || rowDate >= fromDate) && (!toDate || rowDate <= toDate);
+                const matchesAccount = getLedgerAccountLookupKeys(row).some((key) => selectedKeys.has(key));
+                return matchesDate && matchesAccount;
+            })
+            .sort((a, b) => String(a.entry_date ?? '').localeCompare(String(b.entry_date ?? '')));
+    }, [fromDate, ledgerRows, selectedTrialBalanceRow, toDate]);
+    const selectedTrialBalanceLedgerDebit = selectedTrialBalanceLedgerRows.reduce((sum, row) => sum + getLedgerDebitAmount(row), 0);
+    const selectedTrialBalanceLedgerCredit = selectedTrialBalanceLedgerRows.reduce((sum, row) => sum + getLedgerCreditAmount(row), 0);
+
+    useEffect(() => {
+        if (!selectedTrialBalanceKey) return;
+        if (trialBalanceDisplayRows.some((row) => getTrialBalanceRowKey(row) === selectedTrialBalanceKey)) return;
+        setSelectedTrialBalanceKey(null);
+    }, [selectedTrialBalanceKey, trialBalanceDisplayRows]);
+
+    const tbDebit = trialBalanceDisplayRows.reduce((sum, row) => sum + getTrialBalanceDebitBalance(row), 0);
+    const tbCredit = trialBalanceDisplayRows.reduce((sum, row) => sum + getTrialBalanceCreditBalance(row), 0);
     const tbDifference = tbDebit - tbCredit;
     const isBalanced = Math.abs(tbDebit - tbCredit) < 0.005;
+    const tbMissingTypeCount = trialBalanceDisplayRows.filter((row) => getTrialBalanceType(row, accountMetaByKey) === '-').length;
+    const tbZeroBalanceCount = trialBalanceDisplayRows.filter((row) => Math.abs(getTrialBalanceNet(row)) < 0.005).length;
+    const tbUnexpectedBalanceCount = trialBalanceDisplayRows.filter(hasUnexpectedTrialBalanceSide).length;
     const balanceSheetSections = useMemo(() => makeBalanceSheetSections(balanceSheet), [balanceSheet]);
     const incomeStatementSections = useMemo(() => makeIncomeStatementSections(incomeStatement), [incomeStatement]);
     const bsAssetsTotal = balanceSheetSections[0].total;
@@ -631,7 +761,14 @@ const Reports = () => {
                 <CardHeader className="p-0 pb-1">
                     <CardTitle className="text-sm font-medium text-muted-foreground">Period</CardTitle>
                 </CardHeader>
-                <CardContent className="p-0 text-sm font-semibold">{periodMonth}</CardContent>
+                <CardContent className="p-0">
+                    <Input
+                        type="month"
+                        className="h-8 w-full px-2 text-sm font-semibold"
+                        value={periodMonth}
+                        onChange={(event) => setPeriodMonth(event.target.value)}
+                    />
+                </CardContent>
             </Card>
             <Card className="w-[150px] gap-1 p-3 rounded-md shadow-none border-secondary/20 bg-transparent">
                 <CardHeader className="p-0 pb-1">
@@ -650,32 +787,6 @@ const Reports = () => {
         <>
             <BreadcrumbComp title="Reports" items={BCrumb} leftContent={null} rightContent={headBoxes} />
             <div className="flex flex-col gap-4">
-                <Card className="shadow-none border-secondary/20">
-                    <CardContent className="p-4 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
-                        <div>
-                            <div className="text-sm font-medium">Period reports</div>
-                            <div className="text-sm text-muted-foreground">
-                                JE-backed trial balance, balance sheet, and income statement for {fromDate} to {toDate}.
-                            </div>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                            <Input
-                                type="month"
-                                className="h-9 w-[150px]"
-                                value={periodMonth}
-                                onChange={(event) => setPeriodMonth(event.target.value)}
-                            />
-                            <Button variant="outline" className="h-9 rounded-full" onClick={loadReports} disabled={isLoading}>
-                                {isLoading ? <LoadingSpinner size="sm" variant="dots" /> : null}
-                                Refresh
-                            </Button>
-                            <Button className="h-9 rounded-full" onClick={exportReports} disabled={isExporting || isLoading}>
-                                {isExporting ? <LoadingSpinner size="sm" variant="dots" /> : null}
-                                Export
-                            </Button>
-                        </div>
-                    </CardContent>
-                </Card>
                 {error ? (
                     <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                         {error}
@@ -683,48 +794,49 @@ const Reports = () => {
                 ) : null}
 
                 <Tabs defaultValue="tb" className="w-full">
-                    <TabsList className="w-full justify-start overflow-x-auto rounded-none border-b border-secondary/20 bg-transparent p-0">
-                        <TabsTrigger
-                            value="tb"
-                            className="rounded-none border-b-2 border-transparent bg-transparent px-4 py-3 text-muted-foreground shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
-                        >
-                            Trial Balance
-                        </TabsTrigger>
-                        <TabsTrigger
-                            value="balance-sheet"
-                            className="rounded-none border-b-2 border-transparent bg-transparent px-4 py-3 text-muted-foreground shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
-                        >
-                            Balance Sheet
-                        </TabsTrigger>
-                        <TabsTrigger
-                            value="pl"
-                            className="rounded-none border-b-2 border-transparent bg-transparent px-4 py-3 text-muted-foreground shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
-                        >
-                            P&L
-                        </TabsTrigger>
-                        <TabsTrigger
-                            value="close"
-                            className="rounded-none border-b-2 border-transparent bg-transparent px-4 py-3 text-muted-foreground shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
-                        >
-                            Close
-                        </TabsTrigger>
-                    </TabsList>
+                    <div className="flex items-center justify-between gap-3 border-b border-secondary/20">
+                        <TabsList className="min-w-0 justify-start overflow-x-auto rounded-none bg-transparent p-0">
+                            <TabsTrigger
+                                value="tb"
+                                className="rounded-none border-b-2 border-transparent bg-transparent px-4 py-3 text-muted-foreground shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
+                            >
+                                Trial Balance
+                            </TabsTrigger>
+                            <TabsTrigger
+                                value="balance-sheet"
+                                className="rounded-none border-b-2 border-transparent bg-transparent px-4 py-3 text-muted-foreground shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
+                            >
+                                Balance Sheet
+                            </TabsTrigger>
+                            <TabsTrigger
+                                value="pl"
+                                className="rounded-none border-b-2 border-transparent bg-transparent px-4 py-3 text-muted-foreground shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
+                            >
+                                P&L
+                            </TabsTrigger>
+                            <TabsTrigger
+                                value="close"
+                                className="rounded-none border-b-2 border-transparent bg-transparent px-4 py-3 text-muted-foreground shadow-none data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:text-primary data-[state=active]:shadow-none"
+                            >
+                                Close
+                            </TabsTrigger>
+                        </TabsList>
+                        <Button className="mr-1 h-8 shrink-0 rounded-full px-3 text-xs" onClick={exportReports} disabled={isExporting || isLoading}>
+                            {isExporting ? <LoadingSpinner size="sm" variant="dots" /> : null}
+                            Export
+                        </Button>
+                    </div>
 
                     <TabsContent value="tb" className="mt-4">
                         <Card className="shadow-none border-secondary/20">
-                            <CardHeader className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
+                            <CardHeader className="p-4">
                                 <div>
                                     <CardTitle className="text-base">Trial Balance</CardTitle>
-                                    <div className="mt-1 text-xs text-muted-foreground">Account activity for {periodMonth}</div>
-                                </div>
-                                <div className="grid grid-cols-3 gap-2 text-right">
-                                    <ReportMetric label="Debits" value={tbDebit} />
-                                    <ReportMetric label="Credits" value={tbCredit} />
-                                    <ReportMetric label="Diff" value={tbDifference} valueClass={getSignedClass(tbDifference)} />
+                                    <div className="mt-1 text-xs text-muted-foreground">Account balances for {periodMonth}</div>
                                 </div>
                             </CardHeader>
-                            <CardContent className="p-0">
-                                <div className="overflow-x-auto border-t border-ld">
+                            <CardContent className="grid grid-cols-1 border-t border-ld p-0 xl:grid-cols-[minmax(0,62%)_minmax(320px,38%)]">
+                                <div className="min-w-0 overflow-x-auto xl:border-r xl:border-ld">
                                     <Table>
                                         <THeader>
                                             <TRow>
@@ -732,34 +844,175 @@ const Reports = () => {
                                                 <THead className="min-w-24 px-2">Type</THead>
                                                 <THead className="min-w-28 px-2 text-right">Debit</THead>
                                                 <THead className="min-w-28 px-2 text-right">Credit</THead>
-                                                <THead className="min-w-28 px-2 text-right">Net</THead>
                                             </TRow>
                                         </THeader>
                                         <TBody>
-                                            {trialBalanceRows.map((row) => (
-                                                <TRow key={String(row.account_id ?? getAccountLabel(row))}>
-                                                    <TCell className="text-sm px-2 py-2">{getAccountLabel(row)}</TCell>
-                                                    <TCell className="text-sm px-2 py-2">{getTrialBalanceType(row, accountMetaByKey)}</TCell>
-                                                    <TCell className="text-sm px-2 py-2 text-right tabular-nums">
-                                                        {formatMoney(row.debit ?? 0)}
-                                                    </TCell>
-                                                    <TCell className="text-sm px-2 py-2 text-right tabular-nums">
-                                                        {formatMoney(row.credit ?? 0)}
-                                                    </TCell>
-                                                    <TCell className={`text-sm px-2 py-2 text-right tabular-nums ${getSignedClass(getTrialBalanceNet(row))}`}>
-                                                        {formatMoney(getTrialBalanceNet(row))}
+                                            {trialBalanceDisplayRows.map((row) => {
+                                                const rowKey = getTrialBalanceRowKey(row);
+                                                const isSelected = selectedTrialBalanceKey === rowKey;
+
+                                                return (
+                                                    <TRow
+                                                        key={rowKey}
+                                                        role="button"
+                                                        tabIndex={0}
+                                                        aria-selected={isSelected}
+                                                        className={[
+                                                            'cursor-pointer transition-colors hover:bg-muted/50',
+                                                            isSelected ? 'bg-muted shadow-[inset_3px_0_0_hsl(var(--primary))]' : '',
+                                                        ].filter(Boolean).join(' ')}
+                                                        onClick={() => setSelectedTrialBalanceKey(rowKey)}
+                                                        onKeyDown={(event) => {
+                                                            if (event.key === 'Enter' || event.key === ' ') {
+                                                                event.preventDefault();
+                                                                setSelectedTrialBalanceKey(rowKey);
+                                                            }
+                                                        }}
+                                                    >
+                                                        <TCell className="px-2 py-2 text-sm">{getAccountLabel(row)}</TCell>
+                                                        <TCell className="px-2 py-2 text-sm">{getTrialBalanceType(row, accountMetaByKey)}</TCell>
+                                                        <TCell className="px-2 py-2 text-right text-sm tabular-nums">
+                                                            {formatTrialBalanceAmount(getTrialBalanceDebitBalance(row))}
+                                                        </TCell>
+                                                        <TCell className="px-2 py-2 text-right text-sm tabular-nums">
+                                                            {formatTrialBalanceAmount(getTrialBalanceCreditBalance(row))}
+                                                        </TCell>
+                                                    </TRow>
+                                                );
+                                            })}
+                                            {!isLoading && trialBalanceDisplayRows.length === 0 ? (
+                                                <TRow>
+                                                    <TCell className="px-2 py-3 text-sm text-muted-foreground" colSpan={4}>
+                                                        No trial balance rows for this period.
                                                     </TCell>
                                                 </TRow>
-                                            ))}
-                                            {!isLoading && trialBalanceRows.length === 0 ? (
-                                                <TRow>
-                                                    <TCell className="px-2 py-3 text-sm text-muted-foreground" colSpan={5}>
-                                                        No trial balance rows for this period.
+                                            ) : null}
+                                            {trialBalanceDisplayRows.length > 0 ? (
+                                                <TRow className="bg-muted/20">
+                                                    <TCell className="px-2 py-2 text-sm font-semibold" colSpan={2}>
+                                                        Total
+                                                    </TCell>
+                                                    <TCell className="px-2 py-2 text-right text-sm font-semibold tabular-nums">
+                                                        {formatMoney(tbDebit)}
+                                                    </TCell>
+                                                    <TCell className="px-2 py-2 text-right text-sm font-semibold tabular-nums">
+                                                        {formatMoney(tbCredit)}
                                                     </TCell>
                                                 </TRow>
                                             ) : null}
                                         </TBody>
                                     </Table>
+                                </div>
+
+                                <div className="flex flex-col gap-4 p-4">
+                                    <div>
+                                        <div className="text-sm font-semibold">Review Summary</div>
+                                        <div className="mt-1 text-xs text-muted-foreground">{fromDate} to {toDate}</div>
+                                    </div>
+                                    <div className="grid grid-cols-3 gap-2 text-right">
+                                        <ReportMetric label="Debits" value={tbDebit} />
+                                        <ReportMetric label="Credits" value={tbCredit} />
+                                        <ReportMetric label="Diff" value={tbDifference} valueClass={getSignedClass(tbDifference)} />
+                                    </div>
+
+                                    <div className="overflow-hidden rounded-md border border-secondary/20">
+                                        <div className="flex items-center justify-between border-b border-ld px-3 py-2">
+                                            <span className="text-sm font-medium">Balanced</span>
+                                            <Badge className={`rounded-full ${isBalanced ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
+                                                {isBalanced ? 'Yes' : 'Review'}
+                                            </Badge>
+                                        </div>
+                                        <div className="flex items-center justify-between border-b border-ld px-3 py-2">
+                                            <span className="text-sm font-medium">Missing type</span>
+                                            <span className="text-sm font-semibold tabular-nums">{tbMissingTypeCount}</span>
+                                        </div>
+                                        <div className="flex items-center justify-between border-b border-ld px-3 py-2">
+                                            <span className="text-sm font-medium">Zero balance</span>
+                                            <span className="text-sm font-semibold tabular-nums">{tbZeroBalanceCount}</span>
+                                        </div>
+                                        <div className="flex items-center justify-between px-3 py-2">
+                                            <span className="text-sm font-medium">Unexpected side</span>
+                                            <span className="text-sm font-semibold tabular-nums">{tbUnexpectedBalanceCount}</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="rounded-md border border-secondary/20 p-3">
+                                        <div className="text-sm font-semibold">Selected Account</div>
+                                        {selectedTrialBalanceRow ? (
+                                            <>
+                                                <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
+                                                    <div className="text-muted-foreground">Account</div>
+                                                    <div className="text-right font-medium">{getAccountLabel(selectedTrialBalanceRow)}</div>
+                                                    <div className="text-muted-foreground">Side</div>
+                                                    <div className="text-right">{getTrialBalanceSide(selectedTrialBalanceRow)}</div>
+                                                    <div className="text-muted-foreground">Balance</div>
+                                                    <div className="text-right font-mono font-semibold tabular-nums">
+                                                        {formatMoney(Math.abs(getTrialBalanceNet(selectedTrialBalanceRow)))}
+                                                    </div>
+                                                    <div className="text-muted-foreground">Activity</div>
+                                                    <div className="text-right font-mono text-xs font-semibold tabular-nums">
+                                                        {formatMoney(selectedTrialBalanceLedgerDebit)} / {formatMoney(selectedTrialBalanceLedgerCredit)}
+                                                    </div>
+                                                </div>
+                                            </>
+                                        ) : (
+                                            <div className="mt-2 text-sm text-muted-foreground">
+                                                Select an account in the trial balance to review the transactions behind its balance.
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {selectedTrialBalanceRow ? (
+                                        <div className="overflow-hidden rounded-md border border-secondary/20">
+                                            <div className="flex items-center justify-between border-b border-ld px-3 py-2">
+                                                <div>
+                                                    <div className="text-sm font-semibold">Transaction Detail</div>
+                                                    <div className="text-xs text-muted-foreground">
+                                                        {selectedTrialBalanceLedgerRows.length} ledger {selectedTrialBalanceLedgerRows.length === 1 ? 'row' : 'rows'}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="max-h-[360px] overflow-y-auto">
+                                                <Table>
+                                                    <THeader>
+                                                        <TRow>
+                                                            <THead className="min-w-20 px-2 text-xs">Date</THead>
+                                                            <THead className="min-w-16 px-2 text-xs">JE</THead>
+                                                            <THead className="min-w-36 px-2 text-xs">Memo</THead>
+                                                            <THead className="min-w-20 px-2 text-right text-xs">Debit</THead>
+                                                            <THead className="min-w-20 px-2 text-right text-xs">Credit</THead>
+                                                        </TRow>
+                                                    </THeader>
+                                                    <TBody>
+                                                        {selectedTrialBalanceLedgerRows.map((row, index) => (
+                                                            <TRow key={String(row.id ?? `${row.entry_date ?? 'ledger'}-${index}`)}>
+                                                                <TCell className="px-2 py-2 text-xs">{row.entry_date || '-'}</TCell>
+                                                                <TCell className="px-2 py-2 font-mono text-xs">{getLedgerJournalEntryLabel(row)}</TCell>
+                                                                <TCell className="px-2 py-2 text-xs">
+                                                                    <div className="line-clamp-2 whitespace-normal">
+                                                                        {String(row.memo ?? row.description ?? '-')}
+                                                                    </div>
+                                                                </TCell>
+                                                                <TCell className="px-2 py-2 text-right text-xs tabular-nums">
+                                                                    {formatTrialBalanceAmount(getLedgerDebitAmount(row))}
+                                                                </TCell>
+                                                                <TCell className="px-2 py-2 text-right text-xs tabular-nums">
+                                                                    {formatTrialBalanceAmount(getLedgerCreditAmount(row))}
+                                                                </TCell>
+                                                            </TRow>
+                                                        ))}
+                                                        {selectedTrialBalanceLedgerRows.length === 0 ? (
+                                                            <TRow>
+                                                                <TCell className="px-2 py-3 text-xs text-muted-foreground" colSpan={5}>
+                                                                    No ledger rows found for this account in the selected period.
+                                                                </TCell>
+                                                            </TRow>
+                                                        ) : null}
+                                                    </TBody>
+                                                </Table>
+                                            </div>
+                                        </div>
+                                    ) : null}
                                 </div>
                             </CardContent>
                         </Card>

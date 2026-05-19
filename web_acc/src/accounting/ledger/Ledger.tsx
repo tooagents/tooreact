@@ -279,20 +279,11 @@ const Ledger = () => {
                 <Card className="border-secondary/20 shadow-none">
                     <CardHeader className="flex flex-col gap-3 p-4">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                            <CardTitle className="text-base">Account Summary</CardTitle>
-                            <Button
-                                variant="outline"
-                                className="h-8 rounded-full px-3"
-                                onClick={loadLedger}
-                                disabled={isLedgerLoading}
-                            >
-                                {isLedgerLoading ? <LoadingSpinner size="sm" variant="dots" /> : <Icon icon="mdi:refresh" className="h-4 w-4" />}
-                                {isLedgerLoading ? 'Loading...' : 'Refresh GL'}
-                            </Button>
-                        </div>
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                            <Input type="date" className="h-9" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
-                            <Input type="date" className="h-9" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
+                            <CardTitle className="shrink-0 whitespace-nowrap text-base">General Ledger</CardTitle>
+                            <div className="flex shrink-0 gap-2">
+                                <Input type="date" className="h-8 w-[122px] px-2 text-xs" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
+                                <Input type="date" className="h-8 w-[122px] px-2 text-xs" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
+                            </div>
                         </div>
                     </CardHeader>
                     <CardContent className="p-0">
@@ -361,7 +352,7 @@ const Ledger = () => {
                 <Card className="border-secondary/20 shadow-none">
                     <CardHeader className="flex flex-col gap-1 p-4">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                            <CardTitle className="text-base">General Ledger</CardTitle>
+                            <CardTitle className="text-base">Ledger Details</CardTitle>
                             <div className="text-xs text-muted-foreground">{filteredRows.length} rows</div>
                         </div>
                     </CardHeader>
