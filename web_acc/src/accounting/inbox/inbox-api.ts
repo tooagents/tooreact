@@ -131,7 +131,7 @@ export const inboxAPI = {
 
 
     async listAccounts(): Promise<COARow[]> {
-        const response = await apiFetch('/acc/coa');
+        const response = await apiFetch('/acc/coa/get_list_active');
         return parseApiResponse<COARow[]>(response, 'Failed to fetch COA accounts');
     },
 

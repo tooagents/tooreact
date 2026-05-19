@@ -132,7 +132,7 @@ const unwrapJournalEntryResponse = (value: unknown): JournalEntryRow => {
 
 export const jeAPI = {
     async listAccounts(): Promise<AccountRow[]> {
-        const response = await apiFetch('/acc/coa');
+        const response = await apiFetch('/acc/coa/get_list_active');
         return parseApiResponse<AccountRow[]>(response, 'Failed to fetch COA accounts');
     },
 
