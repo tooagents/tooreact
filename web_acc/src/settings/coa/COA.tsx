@@ -10,7 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from 'src/components/ui/input';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
 import { coaAPI } from './COA-api';
-import { AccountFormDialog, ApplyTemplateDialog } from './COA-dialog';
+import { AccountFormDialog, ApplyTemplateDialog } from './dialog';
 import type { COAFormState, COARow, NormalBalance } from '../../types/type_coa';
 import type { COATemplate } from '../../types/type_coa';
 import { coaTemplates } from './COA-template';
@@ -23,6 +23,7 @@ const emptyForm: COAFormState = {
     coa_name: '',
     normal_balance: 'Debit',
     is_posting: true,
+    is_deleted: false,
 };
 
 const getCOAKey = (row: COARow, index: number) => String(row.id ?? `${'coa'}-${index}`);
@@ -42,7 +43,8 @@ const rowToForm = (row: COARow): COAFormState => ({
     coa_name: getCOAName(row),
     coa_level: getCOALevel(row),
     normal_balance: toFormNormalBalance(String(row.normal_balance ?? 'Debit')),
-    is_posting: row.is_posting !== false,    
+    is_posting: row.is_posting !== false,
+    is_deleted: row.is_deleted === true,
 });
 
 const flattenCOATree = (rows: COARow[], depth = 1): COARow[] =>

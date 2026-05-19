@@ -9,7 +9,9 @@ import {
     DialogHeader,
     DialogTitle,
 } from 'src/components/ui/dialog';
+import { Checkbox } from 'src/components/ui/checkbox';
 import { Input } from 'src/components/ui/input';
+import { Label } from 'src/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'src/components/ui/select';
 import type { COAFormState, NormalBalance } from '../../types/type_coa';
 import type { COATemplate } from '../../types/type_coa';
@@ -122,6 +124,22 @@ export const AccountFormDialog = ({
                                 ))}
                             </SelectContent>
                         </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                            <div className="text-xs font-medium text-muted-foreground">Deleted</div>
+                            <div className="text-[11px] text-muted-foreground">Archive this account</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <Checkbox
+                                id="is_deleted"
+                                checked={Boolean(form.is_deleted)}
+                                onCheckedChange={(checked) => setForm((current) => ({ ...current, is_deleted: Boolean(checked) }))}
+                            />
+                            <Label htmlFor="is_deleted" className="text-sm font-medium text-muted-foreground">
+                                Mark as deleted
+                            </Label>
+                        </div>
                     </div>
                 </div>
 
