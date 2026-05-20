@@ -9,7 +9,7 @@ import { Button } from 'src/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from 'src/components/ui/dropdown-menu';
 import { Input } from 'src/components/ui/input';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
-import { coaAPI } from './COA-api';
+import { coaAPI } from './api';
 import { AccountFormDialog, ApplyTemplateDialog } from './dialog';
 import type { COAFormState, COARow, NormalBalance } from '../../types/type_coa';
 import type { COATemplate } from '../../types/type_coa';
@@ -172,24 +172,6 @@ const COA = () => {
         setPendingTemplate(template);
     };
 
-    const applyTemplate = async () => {
-        if (!pendingTemplate) return;
-
-        const template = pendingTemplate;
-        setApplyingTemplate(template.key);
-        setError(null);
-        setMessage(null);
-        try {
-            const result = await coaAPI.applyTemplate(template.key);
-            setMessage(`${template.label} template applied. Created ${result.created ?? 0}, existing ${result.existing ?? 0}.`);
-            await loadCOA();
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to apply COA template.');
-        } finally {
-            setApplyingTemplate(null);
-            setPendingTemplate(null);
-        }
-    };
 
     const openNewAccount = () => {
         setEditingRow(null);
@@ -447,12 +429,6 @@ const COA = () => {
                 </div>
             </div>
 
-            <ApplyTemplateDialog
-                pendingTemplate={pendingTemplate}
-                applyingTemplate={applyingTemplate}
-                onCancel={() => setPendingTemplate(null)}
-                onApply={applyTemplate}
-            />
 
             <AccountFormDialog
                 open={isFormOpen}

@@ -20,16 +20,20 @@ const toCOAPayload = (form: COAFormState) => ({
     is_deleted: form.is_deleted,
 });
 
+
+// GET /acc/coa/get_list_all
+// GET /acc/coa/get_list_active
+// GET /acc/coa/get_tree
+// GET /acc/coa/get_one/{coa_id}
+// POST /acc/coa/post_new
+// PATCH /acc/coa/patch/{coa_id}
+// DELETE /acc/coa/delete/{coa_id} 
+
 export const coaAPI = {
+
     async getTree(): Promise<COARow[]> {
         const response = await apiFetch('/acc/coa/get_tree');
         return parseCOAResponse<COARow[]>(response, 'Failed to fetch COA');
-    },
-
-
-    async applyTemplate(templateKey: string): Promise<ApplyCOAResponse> {
-        const response = await apiFetch(`/acc/coa/templates/${encodeURIComponent(templateKey)}/apply`, { method: 'POST' });
-        return parseCOAResponse<ApplyCOAResponse>(response, 'Failed to apply COA template');
     },
 
 
@@ -41,8 +45,9 @@ export const coaAPI = {
         return parseCOAResponse<COARow>(response, 'Failed to create COA account');
     },
 
+
     async updateCOA(coaId: string, payload: COAFormState): Promise<COARow> {
-        const response = await apiFetch(`/acc/coa/${encodeURIComponent(coaId)}`, {
+        const response = await apiFetch(`/acc/coa/patch/${encodeURIComponent(coaId)}`, {
             method: 'PATCH',
             body: JSON.stringify(toCOAPayload(payload)),
         });
@@ -50,7 +55,7 @@ export const coaAPI = {
     },
 
     async deleteCOA(coaId: string): Promise<void> {
-        const response = await apiFetch(`/acc/coa/${encodeURIComponent(coaId)}`, { method: 'DELETE' });
+        const response = await apiFetch(`/acc/coa/delete/${encodeURIComponent(coaId)}`, { method: 'DELETE' });
         await parseCOAResponse<void>(response, 'Failed to archive COA account');
     },
 };
