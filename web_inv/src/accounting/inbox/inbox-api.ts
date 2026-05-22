@@ -18,11 +18,6 @@ type ApplyCoaResponse = {
     existing: number;
 };
 
-type ImportCsvResponse = {
-    imported_count: number;
-    duplicate_count: number;
-};
-
 type AgentChatResponse = Record<string, unknown>;
 
 async function parseApiResponse<T>(response: Response, message: string): Promise<T> {
@@ -50,18 +45,6 @@ export const inboxAPI = {
     async applyGenericCoa(): Promise<ApplyCoaResponse> {
         const response = await apiFetch('/acc/coa/templates/generic/apply', { method: 'POST' });
         return parseApiResponse<ApplyCoaResponse>(response, 'Failed to apply COA');
-    },
-
-    async importCsv(file: File): Promise<ImportCsvResponse> {
-        const form = new FormData();
-        form.append('file', file);
-
-        const response = await apiFetch('/acc/transactions/import-csv', {
-            method: 'POST',
-            body: form,
-        });
-
-        return parseApiResponse<ImportCsvResponse>(response, 'Failed to import CSV');
     },
 
     async addToInbox(message: string): Promise<AgentChatResponse> {

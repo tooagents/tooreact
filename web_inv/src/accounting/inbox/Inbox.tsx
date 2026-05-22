@@ -2,13 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from 'src/components/ui/card';
 import { Button } from 'src/components/ui/button';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
-import LoadingSpinner from 'src/components/shared/LoadingSpinner';
 import { Icon } from '@iconify/react/dist/iconify.js';
 import { formatMoney } from 'src/core/format';
 import { AccountRow, inboxAPI, TxRow } from 'src/accounting/inbox/inbox-api';
 
 const Inbox = () => {
-    const uploadInputRef = useRef<HTMLInputElement | null>(null);
     const cameraInputRef = useRef<HTMLInputElement | null>(null);
     const [accounts, setAccounts] = useState<AccountRow[]>([]);
     const [transactions, setTransactions] = useState<TxRow[]>([]);
@@ -37,18 +35,6 @@ const Inbox = () => {
             setError(e?.message || 'Failed to load inbox data.');
         } finally {
             setLoading(false);
-        }
-    };
-
-    const uploadCsv = async (nextFile?: File) => {
-        if (!nextFile) return;
-        setError(null);
-        try {
-            const res = await inboxAPI.importCsv(nextFile);
-            setMsg(`Imported ${res.imported_count}, duplicates ${res.duplicate_count}.`);
-            await refresh();
-        } catch (e: any) {
-            setError(e?.message || 'Failed to upload CSV.');
         }
     };
 
@@ -137,16 +123,6 @@ const Inbox = () => {
 
                             <div className="flex flex-wrap items-center gap-2">
                                 <input
-                                    ref={uploadInputRef}
-                                    type="file"
-                                    accept=".csv"
-                                    className="hidden"
-                                    onChange={(e) => {
-                                        uploadCsv(e.target.files?.[0] || undefined);
-                                        e.target.value = '';
-                                    }}
-                                />
-                                <input
                                     ref={cameraInputRef}
                                     type="file"
                                     accept="image/*"
@@ -154,15 +130,6 @@ const Inbox = () => {
                                     className="hidden"
                                     onChange={(e) => handleCameraFile(e.target.files?.[0])}
                                 />
-                                <Button
-                                    variant="outline"
-                                    className="h-9 px-4 rounded-full"
-                                    onClick={() => uploadInputRef.current?.click()}
-                                    disabled={loading}
-                                >
-                                    {loading ? <LoadingSpinner size="sm" variant="dots" /> : <Icon icon="material-symbols:upload-rounded" className="h-4 w-4" />}
-                                    Upload
-                                </Button>
                                 <Button
                                     variant="outline"
                                     className="h-9 px-4 rounded-full"
