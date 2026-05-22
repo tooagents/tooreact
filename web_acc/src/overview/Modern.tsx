@@ -1,10 +1,10 @@
-import { RevenueUpdate } from "src/_overview/components/RevenueUpdate";
-import { YearlyBreakup } from "src/_overview/components/YearlyBreakup";
-import { MonthlyEarning } from "src/_overview/components/MonthlyEarning";
-import { RecentTransaction } from "src/_overview/components/RecentTransaction";
-import { ProductPerformance } from "src/_overview/components/ProuctPerformance";
-import { Footer } from "src/_overview/components/Footer";
-import ProfileWelcome from "src/_overview/components/ProfileWelcome";
+import { RevenueUpdate } from "src/overview/components/RevenueUpdate";
+import { YearlyBreakup } from "src/overview/components/YearlyBreakup";
+import { MonthlyEarning } from "src/overview/components/MonthlyEarning";
+import { RecentTransaction } from "src/overview/components/RecentTransaction";
+import { ProductPerformance } from "src/overview/components/ProuctPerformance";
+import { Footer } from "src/overview/components/Footer";
+import ProfileWelcome from "src/overview/components/ProfileWelcome";
 import { Icon } from "@iconify/react/dist/iconify.js";
 
 const Moderndash = () => {
