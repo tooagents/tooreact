@@ -31,7 +31,7 @@ const BlankLayout = Loadable(lazy(() => import('../_layouts/BlankLayout')));
 const MarketingHome = Loadable(lazy(() => import('src/_marketing/MarketingHome')));
 
 /* =========================Dashboard========================= */
-const Modern = Loadable(lazy(() => import('src/overview/Modern')));
+const Modern = Loadable(lazy(() => import('src/overview/Overview')));
 
 /* =========================Pages========================= */
 const UserProfile = Loadable(lazy(() => import('src/settings/me/Me')));
