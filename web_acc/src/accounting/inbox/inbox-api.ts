@@ -1,8 +1,5 @@
 import { apiFetch } from 'src/core/apihttp';
-import { JournalEntryPreview, unwrapJournalEntryResponse } from 'src/accounting/inbox/inbox-journal-entry';
-import { COARow, TxRow, StreamCallback, AgentChatPayload, ImportCsvResponse, AgentChatResponse } from 'src/types/type_coa';
-
-export type { TxRow };
+import { COARow, StreamCallback, AgentChatPayload, AgentChatResponse } from 'src/types/type_coa';
 
 
 async function parseApiResponse<T>(response: Response, message: string): Promise<T> {
@@ -93,42 +90,6 @@ export const inboxAPI = {
         }
 
         return parseSseResponse<AgentChatResponse>(response, onEvent);
-    },
-
-
-    async listTransactions(): Promise<TxRow[]> {
-        const response = await apiFetch('/acc/get_transaction_list?limit=200');
-        return parseApiResponse<TxRow[]>(response, 'Failed to fetch transactions');
-    },
-
-    async getJournalEntry(journalId: string): Promise<JournalEntryPreview> {
-        const response = await apiFetch(`/acc/je/getone/${encodeURIComponent(journalId)}`);
-        const data = await parseApiResponse<unknown>(response, 'Failed to fetch journal entry');
-        return unwrapJournalEntryResponse(data);
-    },
-
-    async generateJournalEntry(transactionId: string, options: { force?: boolean } = {}): Promise<JournalEntryPreview> {
-        const response = await apiFetch('/acc/je/generate', {
-            method: 'POST',
-            body: JSON.stringify({ transaction_id: transactionId, force: Boolean(options.force) }),
-        });
-        const data = await parseApiResponse<unknown>(response, 'Failed to generate journal entry');
-        return unwrapJournalEntryResponse(data);
-    },
-
-    async updateTransaction(transactionId: string, updates: Partial<TxRow>): Promise<TxRow> {
-        const response = await apiFetch(`/acc/update_transaction/${encodeURIComponent(transactionId)}`, {
-            method: 'PATCH',
-            body: JSON.stringify(updates),
-        });
-        return parseApiResponse<TxRow>(response, 'Failed to update inbox transaction');
-    },
-
-    async voidTransaction(transactionId: string): Promise<TxRow> {
-        const response = await apiFetch(`/acc/void_transaction/${encodeURIComponent(transactionId)}`, {
-            method: 'POST',
-        });
-        return parseApiResponse<TxRow>(response, 'Failed to void inbox transaction');
     },
 
 

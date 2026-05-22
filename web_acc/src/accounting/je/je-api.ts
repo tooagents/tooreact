@@ -13,15 +13,6 @@ export type AccountRow = {
     [key: string]: unknown;
 };
 
-export type TxRow = {
-    id: string;
-    txn_date?: string | null;
-    description?: string | null;
-    amount?: number | string | null;
-    status?: string | null;
-    [key: string]: unknown;
-};
-
 export type JournalEntryLine = {
     id?: string;
     line_type?: string | null;
@@ -139,11 +130,6 @@ export const jeAPI = {
     async applyGenericCoa(): Promise<ApplyCoaResponse> {
         const response = await apiFetch('/acc/coa/templates/generic/apply', { method: 'POST' });
         return parseApiResponse<ApplyCoaResponse>(response, 'Failed to apply COA');
-    },
-
-    async listTransactions(): Promise<TxRow[]> {
-        const response = await apiFetch('/acc/transactions?limit=200');
-        return parseApiResponse<TxRow[]>(response, 'Failed to fetch transactions');
     },
 
     async listEntries(): Promise<JournalEntryRow[]> {

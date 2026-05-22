@@ -1,5 +1,3 @@
-import type { TxRow } from 'src/accounting/inbox/inbox-api';
-
 export type JournalEntryLine = {
     id?: string;
     line_type?: string | null;
@@ -54,27 +52,6 @@ export const unwrapJournalEntryResponse = (value: unknown): JournalEntryPreview 
     }
 
     throw new Error('Journal entry response did not include an entry.');
-};
-
-export const getTransactionJournalId = (row: TxRow | undefined): string | null => {
-    if (!row) return null;
-
-    const journalId =
-        row.journal_id ??
-        row.journal_entry_id ??
-        row.journalEntryId ??
-        row.je_id ??
-        row.jeId;
-
-    const value = String(journalId ?? '').trim();
-    return value || null;
-};
-
-export const getEmbeddedJournalEntry = (row: TxRow | undefined): JournalEntryPreview | null => {
-    if (!row) return null;
-
-    const apiEntry = row.journal_entry ?? row.journalEntry ?? row.je;
-    return isJournalEntryPreview(apiEntry) ? apiEntry : null;
 };
 
 export const formatJournalLineAccount = (line: JournalEntryLine) => {
