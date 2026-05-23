@@ -37,7 +37,7 @@ const SocialButtons: React.FC<MyAppProps> = ({ title }) => {
             const { data, error } = await supabase.auth.signInWithOAuth({
                 provider,
                 options: {
-                    redirectTo: `${window.location.origin}/auth/auth2/login`,
+                    redirectTo: `${window.location.origin}/auth/callback`,
                 },
             });
             if (error) {

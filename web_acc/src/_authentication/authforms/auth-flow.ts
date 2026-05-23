@@ -1,15 +1,20 @@
 import type { NavigateFunction } from "react-router-dom";
 
-import { clientsAPI } from "src/settings/clients/clients-api";
 import type { InterfaceBE } from "src/settings/clients/clients-api";
-import { config } from "src/config";
 import { apiFetch } from "src/core/apihttp";
-import { getAccessToken, supabase } from "src/core/supabase";
+import { supabase } from "src/core/supabase";
 
 type ActiveBE = { active_zbid: string; name: string } | null;
 
 export type SetClients = (clients: InterfaceBE[]) => void;
 export type SetActiveBE = (active: ActiveBE) => void;
+
+function hasProvisioningMetadata(user: { app_metadata?: Record<string, unknown>; user_metadata?: Record<string, unknown> } | null): boolean {
+    const tenantId = user?.app_metadata?.sba_ten_id;
+    const clientId = user?.user_metadata?.sbu_client_id;
+    return typeof tenantId === "string" && tenantId.trim().length > 0
+        && typeof clientId === "string" && clientId.trim().length > 0;
+}
 
 export async function completeAuthLogin(
     navigate: NavigateFunction,
@@ -37,6 +42,20 @@ export async function completeAuthLogin(
     //             name: firstClient.name,
     //         }
     //         : null;
+
+    const { data } = await supabase.auth.getSession();
+    const user = data.session?.user ?? null;
+
+    if (!hasProvisioningMetadata(user)) {
+        await runNewUserProvisioning();
+
+        // Supabase user/app metadata is written by the backend. Refresh so the
+        // next API calls carry sba_ten_id and sbu_client_id in the JWT.
+        const { error: refreshError } = await supabase.auth.refreshSession();
+        if (refreshError) {
+            console.warn("Session refresh warning:", refreshError);
+        }
+    }
 
     // setActiveBE(activeBE);
     navigate("/app");

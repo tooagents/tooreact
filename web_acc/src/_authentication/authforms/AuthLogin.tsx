@@ -9,8 +9,7 @@ import { Label } from 'src/components/ui/label';
 import { supabase } from "src/core/supabase";
 import { notifyToast } from "src/core/toast";
 import AuthLoadingOverlay from "./AuthLoadingOverlay";
-import { useClientStore } from "src/store/client-store";
-// import { completeAuthLogin } from "./auth-flow";
+import { completeAuthLogin } from "./auth-flow";
 
 const STATUS_MESSAGES = [
     "Verifying your credentials...",
@@ -43,8 +42,6 @@ function mapLoginError(error: unknown): { inline: boolean; message: string } {
 
 const AuthLogin = () => {
     const navigate = useNavigate();
-    const setClients = useClientStore((state) => state.setClients);
-    const setActiveBE = useClientStore((state) => state.setActiveBE);
 
     const [email, setEmail] = React.useState("");
     const [password, setPassword] = React.useState("");
@@ -79,8 +76,7 @@ const AuthLogin = () => {
             });
             if (error) {throw error;}
 
-            
-            // await completeAuthLogin(navigate, setClients, setActiveBE);
+            await completeAuthLogin(navigate);
         } catch (error: any) {
             console.error(error);
             const mapped = mapLoginError(error);

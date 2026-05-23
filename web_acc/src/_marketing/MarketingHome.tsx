@@ -4,7 +4,7 @@ import landingCssUrl from '../assets/css/landing.css?url';
 import { supabase } from 'src/core/supabase';
 import { notifyToast } from 'src/core/toast';
 import { useClientStore } from 'src/store/client-store';
-import { completeAuthLogin, runNewUserProvisioning } from '../_authentication/authforms/auth-flow';
+import { completeAuthLogin } from '../_authentication/authforms/auth-flow';
 
 const MarketingHome = () => {
     const navigate = useNavigate();
@@ -109,11 +109,11 @@ const MarketingHome = () => {
                 email: signupEmail.trim(),
                 password: signupPassword,
                 options: {
+                    emailRedirectTo: `${window.location.origin}/auth/callback`,
                     data: {
                         sbu_name: trimmedCompany,
                         sbu_avatar: `https://raw.githubusercontent.com/t4agents/t4agents/refs/heads/main/t4favicon.png`,
                         sbu_client_name: trimmedCompany,
-                        sbu_client_id: `client-${Date.now()}`,
                         sbu_user_type: 'T4USER',
                     },
                 },
@@ -125,8 +125,7 @@ const MarketingHome = () => {
                 notifyToast({ message: 'Check your email to confirm your account, then sign in.', variant: 'info' });
                 return;
             }
-            await runNewUserProvisioning();
-            navigate('/app');
+            await completeAuthLogin(navigate);
         } catch (error: unknown) {
             const rawMessage =
                 typeof error === 'object' && error !== null && 'message' in error
@@ -157,7 +156,7 @@ const MarketingHome = () => {
             const { data, error } = await supabase.auth.signInWithOAuth({
                 provider: 'google',
                 options: {
-                    redirectTo: `${window.location.origin}/auth/auth2/login`,
+                    redirectTo: `${window.location.origin}/auth/callback`,
                 },
             });
             if (error) {

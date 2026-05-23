@@ -9,8 +9,7 @@ import { Label } from "src/components/ui/label";
 import { supabase } from "src/core/supabase";
 import { notifyToast } from "src/core/toast";
 import AuthLoadingOverlay from "./AuthLoadingOverlay";
-import { runNewUserProvisioning } from "./auth-flow";
-import { apiGetJson } from "src/core/apihttp";
+import { completeAuthLogin } from "./auth-flow";
 
 const STATUS_MESSAGES = [
     "Setting up your account...",
@@ -80,11 +79,11 @@ const AuthRegister = () => {
                 email: email.trim(),
                 password,
                 options: {
+                    emailRedirectTo: `${window.location.origin}/auth/callback`,
                     data: {
                         sbu_name: trimmedName,
                         sbu_avatar: `https://raw.githubusercontent.com/t4agents/t4agents/refs/heads/main/t4favicon.png`,
                         sbu_client_name: trimmedName,
-                        sbu_client_id: `client-${Date.now()}`,
                         sbu_user_type: "T4USER",
                     },
                 },
@@ -92,27 +91,16 @@ const AuthRegister = () => {
 
             if (error) {throw error;}
 
-            const uid = data.user?.id;
-            if (!uid) throw new Error("No user id");
+            if (!data.session) {
+                notifyToast({
+                    message: "Check your email to confirm your account, then continue sign in.",
+                    variant: "info",
+                });
+                navigate("/auth/auth2/login");
+                return;
+            }
 
-            // persist uid into auth metadata as sbu_client_id
-            const { error: updateError } = await supabase.auth.updateUser({
-                data: {sbu_client_id: uid,},
-            });
-
-            if (updateError) throw updateError;
-
-            await runNewUserProvisioning();
-            // await runNewUserProvisioning({
-            //     displayName: trimmedName,
-            //     photoURL: `https://raw.githubusercontent.com/t4agents/t4agents/refs/heads/main/t4favicon.png`,
-            // });
-            
-            // Refresh session to get JWT with updated app_metadata (sba_ten_id)
-            const { error: refreshError } = await supabase.auth.refreshSession();
-            if (refreshError) console.warn('Session refresh warning:', refreshError);
-            
-            navigate("/app");
+            await completeAuthLogin(navigate);
 
         } catch (error: any) {
             console.error(error);

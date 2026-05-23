@@ -8,6 +8,7 @@ import { useAuthStore } from 'src/store/auth-store';
 /* =========================Auth Pages========================= */
 const Login2 = Loadable(lazy(() => import('src/_authentication/auth2/Login')));
 const Register2 = Loadable(lazy(() => import('src/_authentication/auth2/Register')));
+const AuthCallback = Loadable(lazy(() => import('src/_authentication/auth2/AuthCallback')));
 const Maintainance = Loadable(lazy(() => import('src/_authentication/Maintainance')));
 const Error = Loadable(lazy(() => import('src/_authentication/Error')));
 
@@ -67,6 +68,11 @@ const router = createBrowserRouter([
     {
         path: '/',
         element: <MarketingHome />,
+    },
+
+    {
+        path: '/auth/callback',
+        element: <AuthCallback />,
     },
 
     // PROTECTED APP ROUTES
