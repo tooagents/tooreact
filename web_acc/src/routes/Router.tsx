@@ -54,6 +54,7 @@ const Notes = Loadable(lazy(() => import('src/_support/notes/Notes')));
 const Form = Loadable(lazy(() => import('src/components/form/Form')));
 const TableDefault = Loadable(lazy(() => import('src/components/table/Table_Default')));
 const Inbox = Loadable(lazy(() => import('src/accounting/inbox/Inbox')));
+const Workspace = Loadable(lazy(() => import('src/accounting/workspace/wshome')));
 const Tickets = Loadable(lazy(() => import('src/_support/ticket/Tickets')));
 const CreateTickets = Loadable(lazy(() => import('src/_support/ticket/CreateTickets')));
 const KB = Loadable(lazy(() => import('src/_support/kb/KB')));
@@ -89,6 +90,7 @@ const router = createBrowserRouter([
                     { path: 'settings/coa', element: <COA /> },
 
                     { path: 'acc/inbox', element: <Inbox /> },
+                    { path: 'acc/workspace', element: <Workspace /> },
                     { path: 'acc/je', element: <PayrollHistoryList /> },
                     { path: 'acc/je/:id', element: <PayrollHistoryDetail /> },
                     { path: 'acc/ledger', element: <Ledger /> },
