@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '@iconify/react/dist/iconify.js';
 import { Badge } from 'src/components/ui/badge';
 import { Button } from 'src/components/ui/button';
@@ -8,6 +8,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from 'src/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'src/components/ui/select';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
+import { Textarea } from 'src/components/ui/textarea';
 import { formatMoney } from 'src/core/format';
 import { inboxAPI } from 'src/accounting/inbox/inbox-api';
 import { ledgerPaperStyle } from 'src/accounting/inbox/inbox-journal-entry';
@@ -20,6 +21,8 @@ type StreamItem = {
     pending?: boolean;
     injectionText?: string;
 };
+
+type ComposerMode = 'type' | 'upload' | 'camera' | 'voice';
 
 type JournalLineDraft = {
     client_id: string;
@@ -46,6 +49,13 @@ type LineAccountLabelSource = {
 };
 
 const pageSize = 10;
+
+const composerModes: Array<{ value: ComposerMode; label: string; icon: string }> = [
+    { value: 'type', label: 'Type', icon: 'mdi:keyboard-outline' },
+    { value: 'upload', label: 'Upload', icon: 'mdi:tray-arrow-up' },
+    { value: 'camera', label: 'Camera', icon: 'mdi:camera-outline' },
+    { value: 'voice', label: 'Voice', icon: 'mdi:microphone-outline' },
+];
 
 const getInjectionItems = (value: string): StreamItem[] => {
     if (value.trim().length === 0) return [];
@@ -212,6 +222,14 @@ const readFileAsText = (file: File): Promise<string> =>
         reader.readAsText(file);
     });
 
+const readFileAsDataUrl = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result ?? ''));
+        reader.onerror = () => reject(reader.error ?? new Error('Failed to read image.'));
+        reader.readAsDataURL(file);
+    });
+
 const Inbox = () => {
     const [entries, setEntries] = useState<JournalEntryRow[]>([]);
     const [accounts, setAccounts] = useState<AccountRow[]>([]);
@@ -226,14 +244,23 @@ const Inbox = () => {
     const [loading, setLoading] = useState(false);
     const [msg, setMsg] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [activeComposerMode, setActiveComposerMode] = useState<ComposerMode>('type');
     const [transactionNote, setTransactionNote] = useState('');
     const [uploadedFileName, setUploadedFileName] = useState('');
     const [uploadedFileText, setUploadedFileText] = useState('');
     const [isDraggingFile, setIsDraggingFile] = useState(false);
+    const [cameraImageName, setCameraImageName] = useState('');
+    const [cameraImageUrl, setCameraImageUrl] = useState('');
+    const [voiceNote, setVoiceNote] = useState('');
+    const [voiceAudioUrl, setVoiceAudioUrl] = useState('');
+    const [voiceAudioName, setVoiceAudioName] = useState('');
+    const [isRecordingVoice, setIsRecordingVoice] = useState(false);
     const [streamItems, setStreamItems] = useState<StreamItem[]>([]);
     const [streamModel, setStreamModel] = useState<string | null>(null);
     const [streamConfidence, setStreamConfidence] = useState<number | null>(null);
     const [isStreaming, setIsStreaming] = useState(false);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const voiceChunksRef = useRef<Blob[]>([]);
 
     const refresh = async (preferredEntryId?: string | null): Promise<JournalEntryRow[]> => {
         setLoading(true);
@@ -277,18 +304,48 @@ const Inbox = () => {
         void refresh();
     }, []);
 
+    useEffect(() => () => {
+        mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop());
+        if (voiceAudioUrl) URL.revokeObjectURL(voiceAudioUrl);
+    }, [voiceAudioUrl]);
+
     useEffect(() => {
         setPageIndex(0);
     }, [entries.length]);
 
     const injectionItems = useMemo(() => getInjectionItems(transactionNote), [transactionNote]);
+    const sourcePreviewItems = useMemo<StreamItem[]>(() => {
+        const items: Array<StreamItem | null> = [
+            uploadedFileText ? {
+                event: 'upload_ready',
+                title: 'Upload ready',
+                detail: uploadedFileName || 'File text attached',
+            } : null,
+            cameraImageUrl ? {
+                event: 'camera_ready',
+                title: 'Camera ready',
+                detail: cameraImageName || 'Image attached',
+            } : null,
+            voiceAudioUrl || voiceNote.trim() ? {
+                event: 'voice_ready',
+                title: 'Voice ready',
+                detail: voiceNote.trim() || voiceAudioName || 'Audio captured',
+            } : null,
+        ];
+
+        return items.filter((item): item is StreamItem => Boolean(item));
+    }, [uploadedFileText, uploadedFileName, cameraImageUrl, cameraImageName, voiceAudioUrl, voiceNote, voiceAudioName]);
     const previewItems = useMemo<StreamItem[]>(() => {
-        if (injectionItems.length === 0) return streamItems;
-        return [
+        const stagedItems = [
             ...injectionItems,
+            ...sourcePreviewItems,
+        ];
+        if (stagedItems.length === 0) return streamItems;
+        return [
+            ...stagedItems,
             ...streamItems,
         ];
-    }, [injectionItems, streamItems]);
+    }, [injectionItems, sourcePreviewItems, streamItems]);
 
     const formatStreamStatus = (value: string) =>
         value
@@ -379,34 +436,7 @@ const Inbox = () => {
         setStreamConfidence(null);
     };
 
-    const handleUploadFile = async (file: File | undefined) => {
-        if (!file || isStreaming) return;
-
-        setError(null);
-        resetStreamPreview();
-        try {
-            const text = await readFileAsText(file);
-            setUploadedFileName(file.name);
-            setUploadedFileText(text);
-        } catch (e: any) {
-            setUploadedFileName('');
-            setUploadedFileText('');
-            setError(e?.message || 'Failed to read file.');
-        }
-    };
-
-    const clearUploadedFile = () => {
-        if (isStreaming) return;
-        setUploadedFileName('');
-        setUploadedFileText('');
-        resetStreamPreview();
-    };
-
-    const addTypedTransaction = async () => {
-        const note = [
-            transactionNote.trim(),
-            uploadedFileText.trim(),
-        ].filter(Boolean).join('\n\n');
+    const submitInboxMessage = async (note: string, clearAfterSubmit: () => void) => {
         if (!note) return;
         setError(null);
         setMsg(null);
@@ -449,23 +479,148 @@ const Inbox = () => {
                     return;
                 }
 
-                setStreamItems((prev) => [...prev, { event, title: formatStreamStatus(event) }]);
+            setStreamItems((prev) => [...prev, { event, title: formatStreamStatus(event) }]);
             });
 
-            setTransactionNote('');
-            setUploadedFileName('');
-            setUploadedFileText('');
+            clearAfterSubmit();
             const responseEntryId = getEntryIdFromResponse(addResponse);
             const refreshedEntries = await refresh(responseEntryId);
             const newEntry = refreshedEntries.find((entry) => !previousEntryIds.has(entry.id));
             const selectedId = responseEntryId ?? newEntry?.id ?? refreshedEntries[0]?.id ?? null;
             setSelectedEntryId(selectedId);
-            setMsg(`Added to inbox: ${note}`);
+            setMsg('Added to inbox.');
         } catch (e: any) {
             setError(e?.message || 'Failed to add transaction note.');
         } finally {
             setIsStreaming(false);
         }
+    };
+
+    const handleUploadFile = async (file: File | undefined) => {
+        if (!file || isStreaming) return;
+
+        setError(null);
+        resetStreamPreview();
+        try {
+            const text = await readFileAsText(file);
+            const note = `Uploaded file (${file.name || 'file'}):\n${text.trim()}`;
+            setUploadedFileName(file.name);
+            setUploadedFileText(text);
+            await submitInboxMessage(note, () => {
+                setUploadedFileName('');
+                setUploadedFileText('');
+            });
+        } catch (e: any) {
+            setUploadedFileName('');
+            setUploadedFileText('');
+            setError(e?.message || 'Failed to read file.');
+        }
+    };
+
+    const clearUploadedFile = () => {
+        if (isStreaming) return;
+        setUploadedFileName('');
+        setUploadedFileText('');
+        resetStreamPreview();
+    };
+
+    const handleCameraImage = async (file: File | undefined) => {
+        if (!file || isStreaming) return;
+
+        setError(null);
+        resetStreamPreview();
+        try {
+            const dataUrl = await readFileAsDataUrl(file);
+            const note = `Camera image attached: ${file.name || 'captured image'}. Extract receipt or invoice details from the image when image ingestion is available.`;
+            setCameraImageName(file.name);
+            setCameraImageUrl(dataUrl);
+            await submitInboxMessage(note, () => {
+                setCameraImageName('');
+                setCameraImageUrl('');
+            });
+        } catch (e: any) {
+            setCameraImageName('');
+            setCameraImageUrl('');
+            setError(e?.message || 'Failed to read image.');
+        }
+    };
+
+    const clearCameraImage = () => {
+        if (isStreaming) return;
+        setCameraImageName('');
+        setCameraImageUrl('');
+        resetStreamPreview();
+    };
+
+    const startVoiceRecording = async () => {
+        if (isStreaming || isRecordingVoice) return;
+
+        setError(null);
+        resetStreamPreview();
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const recorder = new MediaRecorder(stream);
+            voiceChunksRef.current = [];
+            mediaRecorderRef.current = recorder;
+
+            recorder.ondataavailable = (event) => {
+                if (event.data.size > 0) voiceChunksRef.current.push(event.data);
+            };
+            recorder.onstop = () => {
+                const audioBlob = new Blob(voiceChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
+                const nextUrl = URL.createObjectURL(audioBlob);
+                setVoiceAudioUrl((currentUrl) => {
+                    if (currentUrl) URL.revokeObjectURL(currentUrl);
+                    return nextUrl;
+                });
+                setVoiceAudioName(`Voice note ${new Date().toLocaleTimeString()}`);
+                stream.getTracks().forEach((track) => track.stop());
+                mediaRecorderRef.current = null;
+                voiceChunksRef.current = [];
+            };
+
+            recorder.start();
+            setIsRecordingVoice(true);
+        } catch (e: any) {
+            setError(e?.message || 'Microphone access was not available.');
+            setIsRecordingVoice(false);
+        }
+    };
+
+    const stopVoiceRecording = () => {
+        if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') return;
+        mediaRecorderRef.current.stop();
+        setIsRecordingVoice(false);
+    };
+
+    const clearVoiceInput = () => {
+        if (isStreaming) return;
+        if (isRecordingVoice) stopVoiceRecording();
+        setVoiceNote('');
+        setVoiceAudioName('');
+        setVoiceAudioUrl((currentUrl) => {
+            if (currentUrl) URL.revokeObjectURL(currentUrl);
+            return '';
+        });
+        resetStreamPreview();
+    };
+
+    const addTypedTransaction = async () => {
+        const note = [
+            transactionNote.trim(),
+            voiceNote.trim() ? `Voice note transcript:\n${voiceNote.trim()}` : '',
+            voiceAudioName && !voiceNote.trim() ? `Voice recording attached: ${voiceAudioName}. Transcribe this audio when voice ingestion is available.` : '',
+        ].filter(Boolean).join('\n\n');
+
+        await submitInboxMessage(note, () => {
+            setTransactionNote('');
+            setVoiceNote('');
+            setVoiceAudioName('');
+            setVoiceAudioUrl((currentUrl) => {
+                if (currentUrl) URL.revokeObjectURL(currentUrl);
+                return '';
+            });
+        });
     };
 
     const pageCount = Math.max(1, Math.ceil(entries.length / pageSize));
@@ -598,6 +753,25 @@ const Inbox = () => {
         }
     };
 
+    const hasComposerInput = Boolean(
+        transactionNote.trim() ||
+        uploadedFileText.trim() ||
+        cameraImageUrl ||
+        voiceNote.trim() ||
+        voiceAudioUrl,
+    );
+    const hasManualComposerInput = Boolean(
+        transactionNote.trim() ||
+        voiceNote.trim() ||
+        voiceAudioUrl,
+    );
+    const stagedSourceCount = [
+        transactionNote.trim(),
+        uploadedFileText.trim(),
+        cameraImageUrl,
+        voiceNote.trim() || voiceAudioUrl,
+    ].filter(Boolean).length;
+
     return (
         <>
             <Dialog
@@ -636,78 +810,185 @@ const Inbox = () => {
             <div className="flex gap-6 flex-col">
                 <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-2">
                     <div className="h-full">
-                        <div className="flex h-full min-h-[220px] flex-col gap-3 rounded-md border border-secondary/20 bg-muted/20 p-3">
-                            <div className="flex items-center gap-2 rounded-md border border-input bg-background px-3">
-                                <Icon icon="mdi:message-text-outline" className="h-4 w-4 text-muted-foreground" />
-                                <input
-                                    className="h-10 w-full bg-transparent text-sm outline-none"
-                                    value={transactionNote}
-                                    onChange={(e) => handleTransactionNoteChange(e.target.value)}
-                                    placeholder='Type transaction (e.g. "Uber 23 yesterday")'
-                                />
+                        <div className="flex h-full min-h-[260px] flex-col gap-3 rounded-md border border-secondary/20 bg-muted/20 p-3">
+                            <div className="grid grid-cols-4 gap-1 rounded-md border border-secondary/20 bg-background p-1">
+                                {composerModes.map((mode) => {
+                                    const isActive = activeComposerMode === mode.value;
+
+                                    return (
+                                        <button
+                                            key={mode.value}
+                                            type="button"
+                                            className={[
+                                                'flex h-9 items-center justify-center gap-1.5 rounded-md text-xs font-medium transition-colors',
+                                                isActive ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+                                            ].filter(Boolean).join(' ')}
+                                            onClick={() => setActiveComposerMode(mode.value)}
+                                            disabled={isStreaming}
+                                            aria-pressed={isActive}
+                                        >
+                                            <Icon icon={mode.icon} className="h-4 w-4" />
+                                            <span className="hidden sm:inline">{mode.label}</span>
+                                        </button>
+                                    );
+                                })}
                             </div>
 
-                            <label
-                                className={[
-                                    'flex min-h-[112px] cursor-pointer flex-col items-center justify-center rounded-md border border-dashed bg-background px-4 py-5 text-center text-sm transition-colors',
-                                    isDraggingFile ? 'border-primary text-primary' : 'border-secondary/30 text-muted-foreground hover:border-primary/50 hover:text-foreground',
-                                    isStreaming ? 'pointer-events-none opacity-60' : '',
-                                ].filter(Boolean).join(' ')}
-                                onDragEnter={(event) => {
-                                    event.preventDefault();
-                                    setIsDraggingFile(true);
-                                }}
-                                onDragOver={(event) => {
-                                    event.preventDefault();
-                                    setIsDraggingFile(true);
-                                }}
-                                onDragLeave={(event) => {
-                                    event.preventDefault();
-                                    setIsDraggingFile(false);
-                                }}
-                                onDrop={(event) => {
-                                    event.preventDefault();
-                                    setIsDraggingFile(false);
-                                    void handleUploadFile(event.dataTransfer.files?.[0]);
-                                }}
-                            >
-                                <input
-                                    type="file"
-                                    className="sr-only"
-                                    disabled={isStreaming}
-                                    onChange={(event) => {
-                                        void handleUploadFile(event.target.files?.[0]);
-                                        event.target.value = '';
+                            {activeComposerMode === 'type' ? (
+                                <div className="flex min-h-[128px] flex-1 flex-col gap-2 rounded-md border border-input bg-background p-3">
+                                    <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                                        <Icon icon="mdi:message-text-outline" className="h-4 w-4" />
+                                        Type transaction
+                                    </div>
+                                    <Textarea
+                                        className="min-h-[82px] flex-1 resize-none border-0 bg-transparent p-0 text-sm shadow-none outline-none focus-visible:ring-0"
+                                        value={transactionNote}
+                                        onChange={(event) => handleTransactionNoteChange(event.target.value)}
+                                        placeholder='Type transaction (e.g. "Uber 23 yesterday")'
+                                        disabled={isStreaming}
+                                    />
+                                </div>
+                            ) : null}
+
+                            {activeComposerMode === 'upload' ? (
+                                <label
+                                    className={[
+                                        'flex min-h-[128px] flex-1 cursor-pointer flex-col items-center justify-center rounded-md border border-dashed bg-background px-4 py-5 text-center text-sm transition-colors',
+                                        isDraggingFile ? 'border-primary text-primary' : 'border-secondary/30 text-muted-foreground hover:border-primary/50 hover:text-foreground',
+                                        isStreaming ? 'pointer-events-none opacity-60' : '',
+                                    ].filter(Boolean).join(' ')}
+                                    onDragEnter={(event) => {
+                                        event.preventDefault();
+                                        setIsDraggingFile(true);
                                     }}
-                                />
-                                <Icon icon="mdi:tray-arrow-up" className="mb-2 h-6 w-6" />
-                                <span className="font-medium text-foreground">
-                                    {uploadedFileName ? uploadedFileName : 'Drop file'}
-                                </span>
-                                <span className="mt-1 text-xs">
-                                    {uploadedFileText ? 'Ready to inject with the typed transaction.' : 'Drag a file here or click to upload'}
-                                </span>
-                            </label>
+                                    onDragOver={(event) => {
+                                        event.preventDefault();
+                                        setIsDraggingFile(true);
+                                    }}
+                                    onDragLeave={(event) => {
+                                        event.preventDefault();
+                                        setIsDraggingFile(false);
+                                    }}
+                                    onDrop={(event) => {
+                                        event.preventDefault();
+                                        setIsDraggingFile(false);
+                                        void handleUploadFile(event.dataTransfer.files?.[0]);
+                                    }}
+                                >
+                                    <input
+                                        type="file"
+                                        className="sr-only"
+                                        disabled={isStreaming}
+                                        onChange={(event) => {
+                                            void handleUploadFile(event.target.files?.[0]);
+                                            event.target.value = '';
+                                        }}
+                                    />
+                                    <Icon icon="mdi:tray-arrow-up" className="mb-2 h-6 w-6" />
+                                    <span className="font-medium text-foreground">
+                                        {uploadedFileName ? uploadedFileName : 'Drop file'}
+                                    </span>
+                                    <span className="mt-1 text-xs">
+                                        {uploadedFileText ? 'Ready to inject.' : 'Drag a text/CSV file here or click to upload'}
+                                    </span>
+                                </label>
+                            ) : null}
+
+                            {activeComposerMode === 'camera' ? (
+                                <label
+                                    className={[
+                                        'flex min-h-[128px] flex-1 cursor-pointer flex-col gap-3 rounded-md border border-dashed bg-background p-3 transition-colors',
+                                        isStreaming ? 'pointer-events-none opacity-60' : 'border-secondary/30 hover:border-primary/50',
+                                    ].filter(Boolean).join(' ')}
+                                >
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        capture="environment"
+                                        className="sr-only"
+                                        disabled={isStreaming}
+                                        onChange={(event) => {
+                                            void handleCameraImage(event.target.files?.[0]);
+                                            event.target.value = '';
+                                        }}
+                                    />
+                                    <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-md bg-muted/40">
+                                        {cameraImageUrl ? (
+                                            <img src={cameraImageUrl} alt={cameraImageName || 'Camera capture'} className="max-h-36 w-full object-contain" />
+                                        ) : (
+                                            <div className="text-center text-sm text-muted-foreground">
+                                                <Icon icon="mdi:camera-outline" className="mx-auto mb-2 h-7 w-7" />
+                                                <p className="font-medium text-foreground">Camera capture</p>
+                                                <p className="mt-1 text-xs">Click to take or upload a receipt image</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </label>
+                            ) : null}
+
+                            {activeComposerMode === 'voice' ? (
+                                <div className="flex min-h-[128px] flex-1 flex-col gap-3 rounded-md border border-input bg-background p-3">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <Button
+                                            type="button"
+                                            className="h-9 rounded-full px-4"
+                                            onClick={isRecordingVoice ? stopVoiceRecording : startVoiceRecording}
+                                            disabled={isStreaming}
+                                        >
+                                            <Icon icon={isRecordingVoice ? 'mdi:stop-circle-outline' : 'mdi:microphone-outline'} className="h-4 w-4" />
+                                            {isRecordingVoice ? 'Stop' : 'Record'}
+                                        </Button>
+                                        {voiceAudioUrl ? (
+                                            <audio className="h-9 max-w-full" src={voiceAudioUrl} controls />
+                                        ) : (
+                                            <span className="text-xs text-muted-foreground">
+                                                {isRecordingVoice ? 'Recording...' : 'Record audio, then add a transcript or summary.'}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <Textarea
+                                        className="min-h-[72px] resize-none text-sm"
+                                        value={voiceNote}
+                                        onChange={(event) => {
+                                            setVoiceNote(event.target.value);
+                                            resetStreamPreview();
+                                        }}
+                                        placeholder="Voice transcript or short summary"
+                                        disabled={isStreaming}
+                                    />
+                                </div>
+                            ) : null}
 
                             <div className="mt-auto flex flex-col gap-3 lg:flex-row lg:items-center">
-                                <Button
-                                    className="h-9 px-5 rounded-full shadow-sm"
-                                    onClick={addTypedTransaction}
-                                    disabled={(!transactionNote.trim() && !uploadedFileText.trim()) || isStreaming}
-                                >
-                                    <Icon icon="mdi:plus-circle-outline" className="h-4 w-4" />
-                                    {isStreaming ? 'Adding...' : 'Add to Inbox'}
-                                </Button>
-                                {uploadedFileText ? (
+                                {activeComposerMode === 'type' || activeComposerMode === 'voice' ? (
+                                    <Button
+                                        className="h-9 px-5 rounded-full shadow-sm"
+                                        onClick={addTypedTransaction}
+                                        disabled={!hasManualComposerInput || isStreaming}
+                                    >
+                                        <Icon icon="mdi:plus-circle-outline" className="h-4 w-4" />
+                                        {isStreaming ? 'Adding...' : 'Add to Inbox'}
+                                    </Button>
+                                ) : null}
+                                {stagedSourceCount > 0 ? (
+                                    <span className="text-xs text-muted-foreground">
+                                        {stagedSourceCount} source{stagedSourceCount === 1 ? '' : 's'} ready
+                                    </span>
+                                ) : null}
+                                {uploadedFileText || cameraImageUrl || voiceAudioUrl || voiceNote.trim() ? (
                                     <Button
                                         type="button"
                                         variant="outline"
                                         className="h-9 rounded-full px-4"
-                                        onClick={clearUploadedFile}
+                                        onClick={() => {
+                                            clearUploadedFile();
+                                            clearCameraImage();
+                                            clearVoiceInput();
+                                        }}
                                         disabled={isStreaming}
                                     >
                                         <Icon icon="mdi:close-circle-outline" className="h-4 w-4" />
-                                        Clear file
+                                        Clear sources
                                     </Button>
                                 ) : null}
                             </div>
@@ -717,7 +998,7 @@ const Inbox = () => {
                     </div>
 
                     <div className="h-full min-w-0 max-w-full overflow-hidden">
-                        <div className="flex h-full min-h-[220px] w-full min-w-0 max-w-full flex-col overflow-hidden rounded-md border border-dashed border-secondary/30 bg-background px-4 py-3 text-xs text-muted-foreground shadow-sm">
+                        <div className="flex h-full min-h-[260px] w-full min-w-0 max-w-full flex-col overflow-hidden rounded-md border border-dashed border-secondary/30 bg-background px-4 py-3 text-xs text-muted-foreground shadow-sm">
                             {previewItems.length > 0 || isStreaming ? (
                                 <div className="flex min-h-0 flex-1 flex-col gap-3">
                                     <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -1254,3 +1535,7 @@ const Inbox = () => {
 };
 
 export default Inbox;
+
+
+// 1. type/upload/camera/voice tabs in a window, not like tabes, feels not good.
+// 2. voice table remove "Record Record audio, then add a transcript or summary.", change the Add to Inbox to Record. and once start recording, change to Stop 
