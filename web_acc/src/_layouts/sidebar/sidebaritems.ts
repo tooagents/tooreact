@@ -55,15 +55,15 @@ const SidebarContent: MenuItem[] = [
                 name: 'Workspace',
                 icon: 'solar:ufo-linear',
                 id: uniqueId(),
-                url: '/app/acc/inbox',
+                url: '/app/acc/workspace',
             },
 
-            // {
-            //     name: 'Entries',
-            //     icon: 'solar:inbox-linear',
-            //     id: uniqueId(),
-            //     url: '/app/acc/je',
-            // },
+            {
+                name: 'Journal Entries',
+                icon: 'solar:inbox-linear',
+                id: uniqueId(),
+                url: '/app/acc/inbox',
+            },
 
             {
                 name: 'Ledger',
