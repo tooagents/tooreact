@@ -8,6 +8,7 @@ import { AccountRow, inboxAPI, TxRow } from 'src/accounting/inbox/inbox-api';
 
 const Inbox = () => {
     const cameraInputRef = useRef<HTMLInputElement | null>(null);
+    const uploadInputRef = useRef<HTMLInputElement | null>(null);
     const [accounts, setAccounts] = useState<AccountRow[]>([]);
     const [transactions, setTransactions] = useState<TxRow[]>([]);
     const [loading, setLoading] = useState(false);
@@ -56,6 +57,13 @@ const Inbox = () => {
         if (!nextFile) return;
         setError(null);
         setMsg(`Captured image: ${nextFile.name}`);
+        await refresh();
+    };
+
+    const handleUploadFile = async (nextFile?: File) => {
+        if (!nextFile) return;
+        setError(null);
+        setMsg(`Uploaded file: ${nextFile.name}`);
         await refresh();
     };
 
@@ -112,14 +120,32 @@ const Inbox = () => {
                         </div>
 
                         <div className="mt-3 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                            <Button
-                                className="h-9 px-5 rounded-full shadow-sm"
-                                onClick={addTypedTransaction}
-                                disabled={!transactionNote.trim()}
-                            >
-                                <Icon icon="mdi:plus-circle-outline" className="h-4 w-4" />
-                                Add to Inbox
-                            </Button>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <Button
+                                    className="h-9 px-5 rounded-full shadow-sm"
+                                    onClick={addTypedTransaction}
+                                    disabled={!transactionNote.trim()}
+                                >
+                                    <Icon icon="mdi:plus-circle-outline" className="h-4 w-4" />
+                                    Add to Inbox
+                                </Button>
+
+                                <input
+                                    ref={uploadInputRef}
+                                    type="file"
+                                    accept="*/*"
+                                    className="hidden"
+                                    onChange={(e) => handleUploadFile(e.target.files?.[0])}
+                                />
+                                <Button
+                                    variant="outline"
+                                    className="h-9 px-4 rounded-full"
+                                    onClick={() => uploadInputRef.current?.click()}
+                                >
+                                    <Icon icon="mdi:upload-outline" className="h-4 w-4" />
+                                    Upload
+                                </Button>
+                            </div>
 
                             <div className="flex flex-wrap items-center gap-2">
                                 <input
