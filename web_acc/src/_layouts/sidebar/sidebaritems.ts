@@ -52,6 +52,13 @@ const SidebarContent: MenuItem[] = [
         heading: 'AI Accounting',
         children: [
             {
+                name: 'Bank Statement',
+                icon: 'solar:card-linear',
+                id: uniqueId(),
+                url: '/app/acc/bankstatement',
+            },
+
+            {
                 name: 'Workspace',
                 icon: 'solar:ufo-linear',
                 id: uniqueId(),
