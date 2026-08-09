@@ -1,300 +1,188 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '@iconify/react/dist/iconify.js';
 import { Badge } from 'src/components/ui/badge';
 import { Button } from 'src/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from 'src/components/ui/card';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from 'src/components/ui/dialog';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from 'src/components/ui/dropdown-menu';
 import { Input } from 'src/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from 'src/components/ui/select';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
 import { Textarea } from 'src/components/ui/textarea';
-import { formatMoney } from 'src/core/format';
-import { inboxAPI } from 'src/accounting/inbox/inbox-api';
-import { ledgerPaperStyle } from 'src/accounting/inbox/inbox-journal-entry';
-import { AccountRow, jeAPI, JournalEntryRow } from 'src/accounting/je/je-api';
+import { formatMoney, toNumber } from 'src/core/format';
+import {
+    BankTxn,
+    oBankAPI,
+    ReconcileCandidate,
+    ReconcileView,
+} from 'src/accounting/bankstatement/o_bank-api';
 
-type StreamItem = {
-    event: string;
-    title: string;
-    detail?: string;
-    pending?: boolean;
-    injectionText?: string;
-};
+/* ------------------------------------------------------------------ */
+/* Paste parsing (deterministic, client-side)                          */
+/* ------------------------------------------------------------------ */
 
-type ComposerMode = 'type' | 'upload' | 'camera' | 'voice';
-
-type JournalLineDraft = {
-    client_id: string;
-    id?: string | null;
-    account_id: string;
-    line_type: 'debit' | 'credit';
-    amount: string;
+type ParsedRow = {
+    key: string;
+    txn_date: string | null;
     description: string;
+    debit: number | null;
+    credit: number | null;
+    balance: number | null;
+    note: string; // trace note: how this line was read
 };
 
-type JournalEntryDraft = {
-    entry_date: string;
-    memo: string;
-    lines: JournalLineDraft[];
-};
+type TraceItem = { title: string; detail?: string; tone?: 'ok' | 'warn' };
 
-type LineAccountLabelSource = {
-    coa_code?: string | number | null;
-    coa_name?: string | null;
-    account_code?: string | number | null;
-    account_name?: string | null;
-    account_label?: string | null;
-    account_id?: string | number | null;
-};
-
-const pageSize = 10;
-
-const composerModes: Array<{ value: ComposerMode; label: string; icon: string }> = [
-    { value: 'type', label: 'Type', icon: 'mdi:keyboard-outline' },
-    { value: 'upload', label: 'Upload', icon: 'mdi:tray-arrow-up' },
-    { value: 'camera', label: 'Camera', icon: 'mdi:camera-outline' },
-    { value: 'voice', label: 'Voice', icon: 'mdi:microphone-outline' },
+const DATE_PATTERNS: Array<(t: string) => string | null> = [
+    // 2024-08-23
+    (t) => (/^\d{4}-\d{2}-\d{2}$/.test(t) ? t : null),
+    // 08/23/2024 or 23/08/2024 -> keep as-is ISO-ish (MM/DD/YYYY assumed)
+    (t) => {
+        const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+        if (!m) return null;
+        const [, a, b, y] = m;
+        const year = y.length === 2 ? `20${y}` : y;
+        return `${year}-${a.padStart(2, '0')}-${b.padStart(2, '0')}`;
+    },
 ];
 
-const getInjectionItems = (value: string): StreamItem[] => {
-    if (value.trim().length === 0) return [];
-
-    const injectedTokens: string[] = [];
-    const matches = [...value.matchAll(/\S+/g)];
-    const firstNumberMatch = matches.find((match) => /\d/.test(match[0]));
-    const firstNumberIndex = firstNumberMatch?.index;
-
-    matches.forEach((match) => {
-        const token = match[0];
-        const startIndex = match.index ?? 0;
-        if (firstNumberIndex !== undefined && startIndex >= firstNumberIndex) return;
-
-        const endIndex = (match.index ?? 0) + token.length;
-        const isComplete = endIndex < value.length && /\s/.test(value.charAt(endIndex));
-        const hasNumber = /\d/.test(token);
-
-        if (isComplete || hasNumber) {
-            injectedTokens.push(token);
-        }
-    });
-
-    const injectionText =
-        firstNumberIndex === undefined
-            ? injectedTokens.join(' ')
-            : [
-                injectedTokens.join(' '),
-                value.slice(firstNumberIndex).trimStart(),
-            ].filter(Boolean).join(' ');
-
-    return [
-        {
-            event: 'ai_injection_waiting',
-            title: 'AI Injection',
-            injectionText,
-            pending: true,
-        },
-    ];
-};
-
-const getAccountLabel = (account: AccountRow) => {
-    const code = String(account.coa_code ?? account.account_code ?? account.code ?? '').trim();
-    const name = String(account.coa_name ?? account.account_name ?? account.name ?? account.title ?? '').trim();
-
-    if (code && name) return `${code} - ${name}`;
-    if (name) return name;
-    if (code) return code;
-    return String(account.id);
-};
-
-const getLineAccountLabel = (line: LineAccountLabelSource, accountLabelById: Record<string, string>) => {
-    const accountCode = String(line.coa_code ?? line.account_code ?? '').trim();
-    const accountName = String(line.coa_name ?? line.account_name ?? '').trim();
-    const accountLabel = String(line.account_label ?? '').trim();
-    const accountId = String(line.account_id ?? '').trim();
-
-    if (accountCode && accountName) return `${accountCode} ${accountName}`;
-    if (accountCode) return accountCode;
-    if (accountName) return accountName;
-    if (accountId && accountLabelById[accountId]) return accountLabelById[accountId];
-    return accountLabel || accountId || '-';
-};
-
-const getEntryTotal = (entry: JournalEntryRow) => {
-    const debitLines = (entry.lines ?? []).filter((line) => String(line.line_type ?? '').toLowerCase() === 'debit');
-    const totalLines = debitLines.length > 0 ? debitLines : (entry.lines ?? []);
-
-    return totalLines.reduce((sum, line) => {
-        const amount = Number(line.amount ?? 0);
-        return Number.isFinite(amount) ? sum + amount : sum;
-    }, 0);
-};
-
-const getEntryLineTotals = (entry: JournalEntryRow | undefined) => {
-    const lines = entry?.lines ?? [];
-    const debit = lines.reduce((sum, line) => {
-        const amount = Number(line.amount ?? 0);
-        return String(line.line_type ?? '').toLowerCase() === 'debit' && Number.isFinite(amount)
-            ? sum + amount
-            : sum;
-    }, 0);
-    const credit = lines.reduce((sum, line) => {
-        const amount = Number(line.amount ?? 0);
-        return String(line.line_type ?? '').toLowerCase() === 'credit' && Number.isFinite(amount)
-            ? sum + amount
-            : sum;
-    }, 0);
-
-    return {
-        debit,
-        credit,
-        difference: debit - credit,
-    };
-};
-
-const getEntryLabel = (entry: JournalEntryRow) => {
-    const entryNo = String(entry.entry_no ?? '').trim();
-    return entryNo ? `JE-${entryNo}` : entry.id.slice(0, 8);
-};
-
-const getDisplayStatus = (entry: JournalEntryRow) => {
-    const status = String(entry.entry_status ?? entry.status ?? '').trim();
-    if (status) return status;
-    const period = String(entry.period_yyyymm ?? '').trim();
-    return period || 'entry';
-};
-
-const getEntryStatus = (entry: JournalEntryRow) => String(entry.entry_status ?? entry.status ?? '').trim() || '-';
-
-const toDraft = (entry: JournalEntryRow): JournalEntryDraft => ({
-    entry_date: String(entry.entry_date ?? ''),
-    memo: String(entry.memo ?? ''),
-    lines: (entry.lines ?? []).map((line, index) => ({
-        client_id: line.id ?? `${entry.id}-${index}`,
-        id: line.id ?? null,
-        account_id: String(line.account_id ?? ''),
-        line_type: String(line.line_type ?? 'debit').toLowerCase() === 'credit' ? 'credit' : 'debit',
-        amount: String(line.amount ?? ''),
-        description: String(line.description ?? ''),
-    })),
-});
-
-const createBlankLine = (): JournalLineDraft => ({
-    client_id: `new-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    account_id: '',
-    line_type: 'debit',
-    amount: '',
-    description: '',
-});
-
-const getDraftTotals = (draft: JournalEntryDraft | null) => {
-    const lines = draft?.lines ?? [];
-    const debit = lines.reduce((sum, line) => line.line_type === 'debit' ? sum + (Number(line.amount) || 0) : sum, 0);
-    const credit = lines.reduce((sum, line) => line.line_type === 'credit' ? sum + (Number(line.amount) || 0) : sum, 0);
-    return {
-        debit,
-        credit,
-        difference: debit - credit,
-    };
-};
-
-const getEntryIdFromResponse = (value: unknown): string | null => {
-    if (!value || typeof value !== 'object') return null;
-
-    const record = value as Record<string, unknown>;
-    const directId = record.journal_entry_id ?? record.journalId ?? record.entry_id;
-    if (typeof directId === 'string' && directId.trim()) return directId;
-
-    const nested = record.journal_entry ?? record.journalEntry ?? record.entry ?? record.data;
-    if (nested && typeof nested === 'object') {
-        const nestedId = (nested as Record<string, unknown>).id;
-        if (typeof nestedId === 'string' && nestedId.trim()) return nestedId;
+const parseDateToken = (token: string): string | null => {
+    const t = token.trim();
+    for (const p of DATE_PATTERNS) {
+        const r = p(t);
+        if (r) return r;
     }
-
     return null;
 };
 
-const readFileAsText = (file: File): Promise<string> =>
-    new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result ?? ''));
-        reader.onerror = () => reject(reader.error ?? new Error('Failed to read file.'));
-        reader.readAsText(file);
-    });
+const parseAmount = (token: string | undefined): number | null => {
+    if (!token) return null;
+    const cleaned = token.replace(/[$,\s]/g, '');
+    if (!cleaned || cleaned === '-') return null;
+    // Handle (123.45) accounting negatives
+    const neg = /^\(.*\)$/.test(cleaned);
+    const num = Number(cleaned.replace(/[()]/g, ''));
+    if (!Number.isFinite(num)) return null;
+    return neg ? -num : num;
+};
 
-const readFileAsDataUrl = (file: File): Promise<string> =>
-    new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result ?? ''));
-        reader.onerror = () => reject(reader.error ?? new Error('Failed to read image.'));
-        reader.readAsDataURL(file);
-    });
+const splitLine = (line: string): string[] => {
+    if (line.includes('\t')) return line.split('\t').map((c) => c.trim());
+    if (line.includes(',')) return line.split(',').map((c) => c.trim());
+    return line.split(/\s{2,}/).map((c) => c.trim()).filter(Boolean);
+};
 
-const Inbox = () => {
-    const [entries, setEntries] = useState<JournalEntryRow[]>([]);
-    const [accounts, setAccounts] = useState<AccountRow[]>([]);
-    const [accountLabelById, setAccountLabelById] = useState<Record<string, string>>({});
-    const [pageIndex, setPageIndex] = useState(0);
-    const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
-    const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
-    const [entryDraft, setEntryDraft] = useState<JournalEntryDraft | null>(null);
-    const [isSavingEntry, setIsSavingEntry] = useState(false);
-    const [entryToDelete, setEntryToDelete] = useState<JournalEntryRow | null>(null);
-    const [isDeletingEntry, setIsDeletingEntry] = useState(false);
+/**
+ * Best-effort parse of one pasted statement line into a bank transaction.
+ * Supported column shapes (after delimiter split):
+ *   [date, description, debit, credit, balance]
+ *   [date, description, amount, balance]   (sign: -=debit, +=credit)
+ *   [date, description, amount]
+ */
+const parseRow = (line: string, index: number): ParsedRow | null => {
+    const cols = splitLine(line);
+    if (cols.length < 2) return null;
+
+    const txn_date = parseDateToken(cols[0]);
+    const rest = txn_date ? cols.slice(1) : cols;
+
+    // Trailing numeric tokens are amounts; the leading text is the description.
+    const numericTail: number[] = [];
+    let cut = rest.length;
+    for (let i = rest.length - 1; i >= 0; i -= 1) {
+        const n = parseAmount(rest[i]);
+        if (n === null) break;
+        numericTail.unshift(n);
+        cut = i;
+    }
+    const description = rest.slice(0, cut).join(' ').trim() || '(no description)';
+
+    let debit: number | null = null;
+    let credit: number | null = null;
+    let balance: number | null = null;
+    let note = '';
+
+    if (numericTail.length >= 3) {
+        // date, desc, debit, credit, balance
+        [debit, credit, balance] = numericTail.slice(-3);
+        debit = debit || null;
+        credit = credit || null;
+        note = 'debit/credit/balance';
+    } else if (numericTail.length === 2) {
+        // date, desc, amount, balance
+        const [amount, bal] = numericTail;
+        balance = bal;
+        if (amount < 0) debit = Math.abs(amount);
+        else credit = amount;
+        note = 'amount + balance';
+    } else if (numericTail.length === 1) {
+        const amount = numericTail[0];
+        if (amount < 0) debit = Math.abs(amount);
+        else credit = amount;
+        note = 'single amount';
+    } else {
+        return null;
+    }
+
+    return {
+        key: `row-${index}`,
+        txn_date,
+        description,
+        debit,
+        credit,
+        balance,
+        note: txn_date ? note : `${note}, no date`,
+    };
+};
+
+const parsePaste = (text: string): ParsedRow[] => {
+    return text
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .map((l, i) => parseRow(l, i))
+        .filter((r): r is ParsedRow => r !== null);
+};
+
+/* ------------------------------------------------------------------ */
+/* Component                                                           */
+/* ------------------------------------------------------------------ */
+
+const num = (v: unknown) => toNumber(v);
+
+const BankStatement = () => {
+    const [txns, setTxns] = useState<BankTxn[]>([]);
     const [loading, setLoading] = useState(false);
-    const [msg, setMsg] = useState<string | null>(null);
     const [error, setError] = useState<string | null>(null);
-    const [activeComposerMode, setActiveComposerMode] = useState<ComposerMode>('type');
-    const [transactionNote, setTransactionNote] = useState('');
-    const [uploadedFileName, setUploadedFileName] = useState('');
-    const [uploadedFileText, setUploadedFileText] = useState('');
-    const [isDraggingFile, setIsDraggingFile] = useState(false);
-    const [cameraImageName, setCameraImageName] = useState('');
-    const [cameraImageUrl, setCameraImageUrl] = useState('');
-    const [voiceNote, setVoiceNote] = useState('');
-    const [voiceAudioUrl, setVoiceAudioUrl] = useState('');
-    const [voiceAudioName, setVoiceAudioName] = useState('');
-    const [isRecordingVoice, setIsRecordingVoice] = useState(false);
-    const [streamItems, setStreamItems] = useState<StreamItem[]>([]);
-    const [streamModel, setStreamModel] = useState<string | null>(null);
-    const [streamConfidence, setStreamConfidence] = useState<number | null>(null);
-    const [isStreaming, setIsStreaming] = useState(false);
-    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-    const voiceChunksRef = useRef<Blob[]>([]);
+    const [msg, setMsg] = useState<string | null>(null);
 
-    const refresh = async (preferredEntryId?: string | null): Promise<JournalEntryRow[]> => {
+    // Paste / compose
+    const [pasteText, setPasteText] = useState('');
+    const [isImporting, setIsImporting] = useState(false);
+
+    // Trace
+    const [trace, setTrace] = useState<TraceItem[]>([]);
+
+    // Selection + reconcile
+    const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [reconcile, setReconcile] = useState<ReconcileView | null>(null);
+    const [reconcileLoading, setReconcileLoading] = useState(false);
+    const [checked, setChecked] = useState<Record<string, boolean>>({});
+    const [isSaving, setIsSaving] = useState(false);
+
+    const parsedPreview = useMemo(() => parsePaste(pasteText), [pasteText]);
+
+    const refresh = async (preferId?: string | null) => {
         setLoading(true);
         setError(null);
         try {
-            const [existingEntries, accountRows] = await Promise.all([
-                jeAPI.listEntries(),
-                jeAPI.listAccounts(),
-            ]);
-            const map: Record<string, string> = {};
-            for (const account of accountRows) {
-                if (account?.id) map[account.id] = getAccountLabel(account);
-            }
-
-            setAccountLabelById(map);
-            setAccounts(accountRows);
-            setEntries(existingEntries);
-            setSelectedEntryId((currentId) => {
-                if (preferredEntryId && existingEntries.some((entry) => entry.id === preferredEntryId)) {
-                    return preferredEntryId;
-                }
-                if (currentId && existingEntries.some((entry) => entry.id === currentId)) {
-                    return currentId;
-                }
-                return existingEntries[0]?.id ?? null;
+            const rows = await oBankAPI.listTxns();
+            setTxns(rows);
+            setSelectedId((cur) => {
+                if (preferId && rows.some((r) => r.id === preferId)) return preferId;
+                if (cur && rows.some((r) => r.id === cur)) return cur;
+                return rows[0]?.id ?? null;
             });
-            return existingEntries;
         } catch (e: any) {
-            setError(e?.message || 'Failed to load inbox data.');
-            setEntries([]);
-            setAccounts([]);
-            setAccountLabelById({});
-            setSelectedEntryId(null);
-            return [];
+            setError(e?.message || 'Failed to load bank transactions.');
+            setTxns([]);
         } finally {
             setLoading(false);
         }
@@ -304,1215 +192,483 @@ const Inbox = () => {
         void refresh();
     }, []);
 
-    useEffect(() => () => {
-        mediaRecorderRef.current?.stream.getTracks().forEach((track) => track.stop());
-        if (voiceAudioUrl) URL.revokeObjectURL(voiceAudioUrl);
-    }, [voiceAudioUrl]);
+    const selectedTxn = useMemo(
+        () => txns.find((t) => t.id === selectedId) ?? null,
+        [txns, selectedId],
+    );
 
+    // Load reconcile view whenever a credit row is selected.
     useEffect(() => {
-        setPageIndex(0);
-    }, [entries.length]);
-
-    const injectionItems = useMemo(() => getInjectionItems(transactionNote), [transactionNote]);
-    const sourcePreviewItems = useMemo<StreamItem[]>(() => {
-        const items: Array<StreamItem | null> = [
-            uploadedFileText ? {
-                event: 'upload_ready',
-                title: 'Upload ready',
-                detail: uploadedFileName || 'File text attached',
-            } : null,
-            cameraImageUrl ? {
-                event: 'camera_ready',
-                title: 'Camera ready',
-                detail: cameraImageName || 'Image attached',
-            } : null,
-            voiceAudioUrl || voiceNote.trim() ? {
-                event: 'voice_ready',
-                title: 'Voice ready',
-                detail: voiceNote.trim() || voiceAudioName || 'Audio captured',
-            } : null,
-        ];
-
-        return items.filter((item): item is StreamItem => Boolean(item));
-    }, [uploadedFileText, uploadedFileName, cameraImageUrl, cameraImageName, voiceAudioUrl, voiceNote, voiceAudioName]);
-    const previewItems = useMemo<StreamItem[]>(() => {
-        const stagedItems = [
-            ...injectionItems,
-            ...sourcePreviewItems,
-        ];
-        if (stagedItems.length === 0) return streamItems;
-        return [
-            ...stagedItems,
-            ...streamItems,
-        ];
-    }, [injectionItems, sourcePreviewItems, streamItems]);
-
-    const formatStreamStatus = (value: string) =>
-        value
-            .split('_')
-            .filter(Boolean)
-            .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
-            .join(' ');
-
-    const formatTransactionSummary = (meta: Record<string, unknown>) => {
-        const transactions = Array.isArray(meta.transactions) ? meta.transactions : [];
-        const firstTransaction = transactions.find((row): row is Record<string, unknown> =>
-            row !== null && typeof row === 'object',
-        );
-        const confidence =
-            typeof meta.confidence_score === 'number'
-                ? `Confidence: ${Math.round(meta.confidence_score * 100)}%`
-                : '';
-
-        if (!firstTransaction) return confidence;
-
-        const description = String(firstTransaction.description || 'Transaction');
-        const txnDate = String(firstTransaction.txn_date || '-');
-        const amount = String(firstTransaction.amount || '0');
-        const currency = String(firstTransaction.currency || '');
-        return [
-            `${description}.`,
-            `Date: ${txnDate}`,
-            `Amount: ${currency ? `${currency} ` : ''}${amount}`,
-            confidence,
-        ].filter(Boolean).join(' | ');
-    };
-
-    const formatStreamItem = (status: string, meta: Record<string, unknown>): StreamItem | null => {
-        if (status === 'start' || status === 'interpreting_transaction') return null;
-        if (status === 'validating_note' || status === 'import_summary') return null;
-
-        if (status === 'calling_ai_model') {
-            const model = typeof meta.model === 'string' ? meta.model : '';
-            return {
-                event: status,
-                title: 'Calling Ai Model (ok)',
-                detail: model ? `Model: ${model}` : undefined,
-            };
+        if (!selectedTxn) {
+            setReconcile(null);
+            return;
         }
-
-        if (status === 'understanding_transaction' || status === 'ai_interpretation_ready') {
-            return {
-                event: status,
-                title: 'Understanding Transaction',
-                detail: formatTransactionSummary(meta) || 'AI returned a standard accounting description.',
-            };
+        // Only inflows (credits) reconcile to invoices.
+        if (num(selectedTxn.credit) <= 0) {
+            setReconcile(null);
+            setChecked({});
+            return;
         }
-
-        if (status === 'transactions_found') {
-            return {
-                event: status,
-                title: `Transactions Found: ${String(meta.count ?? 0)}`,
-            };
-        }
-
-        if (status === 'saving_inbox') {
-            return {
-                event: status,
-                title: 'Saving Inbox',
-            };
-        }
-
-        return {
-            event: status,
-            title: formatStreamStatus(status),
-        };
-    };
-
-    const handleTransactionNoteChange = (value: string) => {
-        setTransactionNote(value);
-        if (isStreaming) return;
-        setMsg(null);
-        setStreamItems([]);
-        setStreamModel(null);
-        setStreamConfidence(null);
-    };
-
-    const resetStreamPreview = () => {
-        if (isStreaming) return;
-        setMsg(null);
-        setStreamItems([]);
-        setStreamModel(null);
-        setStreamConfidence(null);
-    };
-
-    const submitInboxMessage = async (note: string, clearAfterSubmit: () => void) => {
-        if (!note) return;
-        setError(null);
-        setMsg(null);
-        setStreamItems([]);
-        setStreamModel(null);
-        setStreamConfidence(null);
-        setIsStreaming(true);
-
-        const previousEntryIds = new Set(entries.map((entry) => entry.id));
-
-        try {
-            const addResponse = await inboxAPI.addToInboxStream(note, (event, data) => {
-                if (event === 'status') {
-                    const status = String(data.status || 'Working');
-                    const meta = data.meta && typeof data.meta === 'object'
-                        ? data.meta as Record<string, unknown>
-                        : {};
-                    if (typeof meta.model === 'string') setStreamModel(meta.model);
-                    if (typeof meta.confidence_score === 'number') setStreamConfidence(meta.confidence_score);
-                    const item = formatStreamItem(status, meta);
-                    if (item) setStreamItems((prev) => [...prev, item]);
-                    return;
-                }
-
-                if (event === 'final') {
-                    const response = data.response && typeof data.response === 'object'
-                        ? data.response as Record<string, unknown>
-                        : {};
-                    if (typeof response.model === 'string') setStreamModel(response.model);
-                    if (typeof response.confidence_score === 'number') {
-                        setStreamConfidence(response.confidence_score);
-                    }
-                    const confidence = typeof response.confidence_score === 'number'
-                        ? `Confidence: ${Math.round(response.confidence_score * 100)}%`
-                        : undefined;
-                    setStreamItems((prev) => [
-                        ...prev,
-                        { event: 'inbox_updated', title: 'Inbox updated:', detail: confidence },
-                    ]);
-                    return;
-                }
-
-            setStreamItems((prev) => [...prev, { event, title: formatStreamStatus(event) }]);
-            });
-
-            clearAfterSubmit();
-            const responseEntryId = getEntryIdFromResponse(addResponse);
-            const refreshedEntries = await refresh(responseEntryId);
-            const newEntry = refreshedEntries.find((entry) => !previousEntryIds.has(entry.id));
-            const selectedId = responseEntryId ?? newEntry?.id ?? refreshedEntries[0]?.id ?? null;
-            setSelectedEntryId(selectedId);
-            setMsg('Added to inbox.');
-        } catch (e: any) {
-            setError(e?.message || 'Failed to add transaction note.');
-        } finally {
-            setIsStreaming(false);
-        }
-    };
-
-    const handleUploadFile = async (file: File | undefined) => {
-        if (!file || isStreaming) return;
-
-        setError(null);
-        resetStreamPreview();
-        try {
-            const text = await readFileAsText(file);
-            const note = `Uploaded file (${file.name || 'file'}):\n${text.trim()}`;
-            setUploadedFileName(file.name);
-            setUploadedFileText(text);
-            await submitInboxMessage(note, () => {
-                setUploadedFileName('');
-                setUploadedFileText('');
-            });
-        } catch (e: any) {
-            setUploadedFileName('');
-            setUploadedFileText('');
-            setError(e?.message || 'Failed to read file.');
-        }
-    };
-
-    const clearUploadedFile = () => {
-        if (isStreaming) return;
-        setUploadedFileName('');
-        setUploadedFileText('');
-        resetStreamPreview();
-    };
-
-    const handleCameraImage = async (file: File | undefined) => {
-        if (!file || isStreaming) return;
-
-        setError(null);
-        resetStreamPreview();
-        try {
-            const dataUrl = await readFileAsDataUrl(file);
-            const note = `Camera image attached: ${file.name || 'captured image'}. Extract receipt or invoice details from the image when image ingestion is available.`;
-            setCameraImageName(file.name);
-            setCameraImageUrl(dataUrl);
-            await submitInboxMessage(note, () => {
-                setCameraImageName('');
-                setCameraImageUrl('');
-            });
-        } catch (e: any) {
-            setCameraImageName('');
-            setCameraImageUrl('');
-            setError(e?.message || 'Failed to read image.');
-        }
-    };
-
-    const clearCameraImage = () => {
-        if (isStreaming) return;
-        setCameraImageName('');
-        setCameraImageUrl('');
-        resetStreamPreview();
-    };
-
-    const startVoiceRecording = async () => {
-        if (isStreaming || isRecordingVoice) return;
-
-        setError(null);
-        resetStreamPreview();
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            const recorder = new MediaRecorder(stream);
-            voiceChunksRef.current = [];
-            mediaRecorderRef.current = recorder;
-
-            recorder.ondataavailable = (event) => {
-                if (event.data.size > 0) voiceChunksRef.current.push(event.data);
-            };
-            recorder.onstop = () => {
-                const audioBlob = new Blob(voiceChunksRef.current, { type: recorder.mimeType || 'audio/webm' });
-                const nextUrl = URL.createObjectURL(audioBlob);
-                setVoiceAudioUrl((currentUrl) => {
-                    if (currentUrl) URL.revokeObjectURL(currentUrl);
-                    return nextUrl;
+        let cancelled = false;
+        setReconcileLoading(true);
+        oBankAPI
+            .getReconcileView(selectedTxn.id)
+            .then((view) => {
+                if (cancelled) return;
+                setReconcile(view);
+                const preset: Record<string, boolean> = {};
+                view.bank_txn.paid_inv_ids.forEach((id) => {
+                    preset[id] = true;
                 });
-                setVoiceAudioName(`Voice note ${new Date().toLocaleTimeString()}`);
-                stream.getTracks().forEach((track) => track.stop());
-                mediaRecorderRef.current = null;
-                voiceChunksRef.current = [];
-            };
+                setChecked(preset);
+            })
+            .catch((e) => {
+                if (!cancelled) setError(e?.message || 'Failed to load reconcile view.');
+            })
+            .finally(() => {
+                if (!cancelled) setReconcileLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedTxn?.id]);
 
-            recorder.start();
-            setIsRecordingVoice(true);
+    /* ---------------- import (paste -> DB) ---------------- */
+
+    const importParsed = async () => {
+        if (parsedPreview.length === 0 || isImporting) return;
+        setIsImporting(true);
+        setError(null);
+        setMsg(null);
+        const newTrace: TraceItem[] = [
+            { title: `Split paste → ${parsedPreview.length} rows` },
+        ];
+        let firstId: string | null = null;
+        try {
+            for (const row of parsedPreview) {
+                const created = await oBankAPI.postTxn({
+                    txn_date: row.txn_date,
+                    description: row.description,
+                    debit: row.debit,
+                    credit: row.credit,
+                    balance: row.balance,
+                    source: 'paste',
+                });
+                if (!firstId) firstId = created.id;
+                const dir =
+                    row.credit != null
+                        ? `+${formatMoney(row.credit)}`
+                        : row.debit != null
+                        ? `-${formatMoney(row.debit)}`
+                        : '—';
+                newTrace.push({
+                    title: `${row.txn_date ?? '(no date)'} ${row.description}`,
+                    detail: `${dir} · read as ${row.note}`,
+                    tone: row.txn_date ? 'ok' : 'warn',
+                });
+            }
+            newTrace.push({ title: `Imported ${parsedPreview.length} transactions`, tone: 'ok' });
+            setTrace(newTrace);
+            setPasteText('');
+            setMsg(`Imported ${parsedPreview.length} transactions.`);
+            await refresh(firstId);
         } catch (e: any) {
-            setError(e?.message || 'Microphone access was not available.');
-            setIsRecordingVoice(false);
+            newTrace.push({ title: 'Import failed', detail: e?.message, tone: 'warn' });
+            setTrace(newTrace);
+            setError(e?.message || 'Failed to import transactions.');
+        } finally {
+            setIsImporting(false);
         }
     };
 
-    const stopVoiceRecording = () => {
-        if (!mediaRecorderRef.current || mediaRecorderRef.current.state === 'inactive') return;
-        mediaRecorderRef.current.stop();
-        setIsRecordingVoice(false);
-    };
+    /* ---------------- reconcile allocation math ---------------- */
 
-    const clearVoiceInput = () => {
-        if (isStreaming) return;
-        if (isRecordingVoice) stopVoiceRecording();
-        setVoiceNote('');
-        setVoiceAudioName('');
-        setVoiceAudioUrl((currentUrl) => {
-            if (currentUrl) URL.revokeObjectURL(currentUrl);
-            return '';
-        });
-        resetStreamPreview();
-    };
+    const depositAmount = num(selectedTxn?.credit);
+    const candidates = reconcile?.candidates ?? [];
 
-    const addTypedTransaction = async () => {
-        const note = [
-            transactionNote.trim(),
-            voiceNote.trim() ? `Voice note transcript:\n${voiceNote.trim()}` : '',
-            voiceAudioName && !voiceNote.trim() ? `Voice recording attached: ${voiceAudioName}. Transcribe this audio when voice ingestion is available.` : '',
-        ].filter(Boolean).join('\n\n');
+    // Live allocation: each ticked invoice takes min(its balance_due, remaining deposit).
+    const allocation = useMemo(() => {
+        let remaining = depositAmount;
+        const alloc: Record<string, number> = {};
+        for (const c of candidates) {
+            if (!checked[c.inv_id]) continue;
+            const due = num(c.inv_balance_due ?? c.inv_total);
+            const take = Math.max(0, Math.min(due, remaining));
+            alloc[c.inv_id] = take;
+            remaining = Math.round((remaining - take) * 100) / 100;
+        }
+        return { alloc, unapplied: Math.max(0, Math.round(remaining * 100) / 100) };
+    }, [candidates, checked, depositAmount]);
 
-        await submitInboxMessage(note, () => {
-            setTransactionNote('');
-            setVoiceNote('');
-            setVoiceAudioName('');
-            setVoiceAudioUrl((currentUrl) => {
-                if (currentUrl) URL.revokeObjectURL(currentUrl);
-                return '';
-            });
-        });
-    };
-
-    const pageCount = Math.max(1, Math.ceil(entries.length / pageSize));
-    const pageData = useMemo(
-        () => entries.slice(pageIndex * pageSize, pageIndex * pageSize + pageSize),
-        [entries, pageIndex],
-    );
-    const canPrev = pageIndex > 0;
-    const canNext = pageIndex + 1 < pageCount;
-
-    const selectedEntry = useMemo(
-        () => entries.find((entry) => entry.id === selectedEntryId) ?? entries[0],
-        [selectedEntryId, entries],
+    const selectedTotal = useMemo(
+        () => Object.values(allocation.alloc).reduce((s, v) => s + v, 0),
+        [allocation],
     );
 
-    const isEditingSelectedEntry = Boolean(selectedEntry && editingEntryId === selectedEntry.id && entryDraft);
-    const selectedEntryTotals = getEntryLineTotals(selectedEntry);
-    const draftTotals = getDraftTotals(entryDraft);
-    const isDraftBalanced = entryDraft !== null &&
-        entryDraft.lines.length > 0 &&
-        Math.abs(draftTotals.difference) < 0.005 &&
-        draftTotals.debit > 0 &&
-        draftTotals.credit > 0;
-    const isDraftComplete = entryDraft !== null &&
-        entryDraft.lines.every((line) =>
-            line.account_id &&
-            line.line_type &&
-            Number(line.amount) > 0,
-        );
-
-    const startEditingEntry = (entry: JournalEntryRow) => {
-        setEditingEntryId(entry.id);
-        setEntryDraft(toDraft(entry));
-        setSelectedEntryId(entry.id);
-        setError(null);
-        setMsg(null);
-    };
-
-    const cancelEditingEntry = () => {
-        setEditingEntryId(null);
-        setEntryDraft(null);
-    };
-
-    const updateDraftHeader = (field: keyof Omit<JournalEntryDraft, 'lines'>, value: string) => {
-        setEntryDraft((current) => current ? { ...current, [field]: value } : current);
-    };
-
-    const updateDraftLine = (clientId: string, updates: Partial<JournalLineDraft>) => {
-        setEntryDraft((current) => current
-            ? {
-                ...current,
-                lines: current.lines.map((line) =>
-                    line.client_id === clientId ? { ...line, ...updates } : line,
-                ),
-            }
-            : current,
-        );
-    };
-
-    const addDraftLine = () => {
-        setEntryDraft((current) => current
-            ? { ...current, lines: [...current.lines, createBlankLine()] }
-            : current,
-        );
-    };
-
-    const removeDraftLine = (clientId: string) => {
-        setEntryDraft((current) => current
-            ? { ...current, lines: current.lines.filter((line) => line.client_id !== clientId) }
-            : current,
-        );
-    };
-
-    const saveEntryDraft = async () => {
-        if (!selectedEntry || !entryDraft || !isDraftBalanced || !isDraftComplete) return;
-
-        setIsSavingEntry(true);
+    const saveReconcile = async () => {
+        if (!selectedTxn || isSaving) return;
+        setIsSaving(true);
         setError(null);
         setMsg(null);
         try {
-            const savedEntry = await jeAPI.updateEntry(selectedEntry.id, {
-                entry_date: entryDraft.entry_date,
-                memo: entryDraft.memo,
-                lines: entryDraft.lines.map((line) => ({
-                    id: line.id || null,
-                    account_id: line.account_id,
-                    line_type: line.line_type,
-                    amount: Number(line.amount),
-                    description: line.description || null,
-                })),
-            });
-            setEntries((current) => current.map((entry) => entry.id === savedEntry.id ? savedEntry : entry));
-            setSelectedEntryId(savedEntry.id);
-            setEditingEntryId(null);
-            setEntryDraft(null);
-            setMsg('Inbox transaction saved.');
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to save inbox transaction.');
+            const allocations = Object.entries(allocation.alloc)
+                .filter(([, amt]) => amt > 0)
+                .map(([inv_id, pay_amount]) => ({ inv_id, pay_amount }));
+            const view = await oBankAPI.reconcile(selectedTxn.id, allocations);
+            setReconcile(view);
+            setMsg(
+                allocation.unapplied > 0
+                    ? `Reconciled. ${formatMoney(allocation.unapplied)} left unapplied.`
+                    : 'Reconciled — deposit fully applied.',
+            );
+            setTrace((prev) => [
+                ...prev,
+                {
+                    title: `Reconciled ${selectedTxn.txn_date ?? ''} ${formatMoney(depositAmount)}`,
+                    detail: `${allocations.length} invoice(s)${
+                        allocation.unapplied > 0 ? ` · unapplied ${formatMoney(allocation.unapplied)}` : ' · exact'
+                    }`,
+                    tone: 'ok',
+                },
+            ]);
+            await refresh(selectedTxn.id);
+        } catch (e: any) {
+            setError(e?.message || 'Failed to reconcile.');
         } finally {
-            setIsSavingEntry(false);
+            setIsSaving(false);
         }
     };
 
-    const confirmDeleteEntry = async () => {
-        if (!entryToDelete || isDeletingEntry) return;
-
-        setIsDeletingEntry(true);
-        setError(null);
-        setMsg(null);
-        try {
-            await jeAPI.deleteEntry(entryToDelete.id);
-            setEntries((current) => {
-                const nextEntries = current.filter((entry) => entry.id !== entryToDelete.id);
-                setSelectedEntryId((currentId) => currentId === entryToDelete.id
-                    ? nextEntries[0]?.id ?? null
-                    : currentId,
-                );
-                return nextEntries;
-            });
-            if (editingEntryId === entryToDelete.id) {
-                setEditingEntryId(null);
-                setEntryDraft(null);
-            }
-            setEntryToDelete(null);
-            setMsg('Inbox transaction deleted.');
-        } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to delete inbox transaction.');
-        } finally {
-            setIsDeletingEntry(false);
-        }
-    };
-
-    const hasComposerInput = Boolean(
-        transactionNote.trim() ||
-        uploadedFileText.trim() ||
-        cameraImageUrl ||
-        voiceNote.trim() ||
-        voiceAudioUrl,
-    );
-    const hasManualComposerInput = Boolean(
-        transactionNote.trim() ||
-        voiceNote.trim() ||
-        voiceAudioUrl,
-    );
-    const stagedSourceCount = [
-        transactionNote.trim(),
-        uploadedFileText.trim(),
-        cameraImageUrl,
-        voiceNote.trim() || voiceAudioUrl,
-    ].filter(Boolean).length;
+    /* ------------------------------------------------------------------ */
+    /* Render                                                              */
+    /* ------------------------------------------------------------------ */
 
     return (
-        <>
-            <Dialog
-                open={Boolean(entryToDelete)}
-                onOpenChange={(open) => {
-                    if (!open && !isDeletingEntry) setEntryToDelete(null);
-                }}
-            >
-                <DialogContent className="max-w-md">
-                    <DialogHeader>
-                        <DialogTitle>Delete transaction?</DialogTitle>
-                        <DialogDescription>
-                            Delete transaction will also delete related the JE linked with this. Confirm to continue.
-                        </DialogDescription>
-                    </DialogHeader>
-                    <DialogFooter className="flex gap-2">
-                        <Button
-                            type="button"
-                            variant="outline"
-                            onClick={() => setEntryToDelete(null)}
-                            disabled={isDeletingEntry}
-                        >
-                            Cancel
-                        </Button>
-                        <Button
-                            type="button"
-                            className="bg-red-600 text-white hover:bg-red-700"
-                            onClick={confirmDeleteEntry}
-                            disabled={isDeletingEntry}
-                        >
-                            {isDeletingEntry ? 'Deleting...' : 'Confirm delete'}
-                        </Button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-            <div className="flex gap-6 flex-col">
-                <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-2">
-                    <div className="h-full">
-                        <div className="flex h-full min-h-[260px] flex-col gap-3 rounded-md border border-secondary/20 bg-muted/20 p-3">
-                            {activeComposerMode === 'type' ? (
-                                <div className="flex min-h-[128px] flex-1 flex-col gap-2 rounded-md border border-input bg-background p-3">
-                                    <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-                                        <Icon icon="mdi:message-text-outline" className="h-4 w-4" />
-                                        Type transaction
-                                    </div>
-                                    <Textarea
-                                        className="min-h-[82px] flex-1 resize-none border-0 bg-transparent p-0 text-sm shadow-none outline-none focus-visible:ring-0"
-                                        value={transactionNote}
-                                        onChange={(event) => handleTransactionNoteChange(event.target.value)}
-                                        placeholder='Type transaction (e.g. "Uber 23 yesterday")'
-                                        disabled={isStreaming}
-                                    />
-                                </div>
-                            ) : null}
-
-                            {activeComposerMode === 'upload' ? (
-                                <label
-                                    className={[
-                                        'flex min-h-[128px] flex-1 cursor-pointer flex-col items-center justify-center rounded-md border border-dashed bg-background px-4 py-5 text-center text-sm transition-colors',
-                                        isDraggingFile ? 'border-primary text-primary' : 'border-secondary/30 text-muted-foreground hover:border-primary/50 hover:text-foreground',
-                                        isStreaming ? 'pointer-events-none opacity-60' : '',
-                                    ].filter(Boolean).join(' ')}
-                                    onDragEnter={(event) => {
-                                        event.preventDefault();
-                                        setIsDraggingFile(true);
-                                    }}
-                                    onDragOver={(event) => {
-                                        event.preventDefault();
-                                        setIsDraggingFile(true);
-                                    }}
-                                    onDragLeave={(event) => {
-                                        event.preventDefault();
-                                        setIsDraggingFile(false);
-                                    }}
-                                    onDrop={(event) => {
-                                        event.preventDefault();
-                                        setIsDraggingFile(false);
-                                        void handleUploadFile(event.dataTransfer.files?.[0]);
-                                    }}
-                                >
-                                    <input
-                                        type="file"
-                                        className="sr-only"
-                                        disabled={isStreaming}
-                                        onChange={(event) => {
-                                            void handleUploadFile(event.target.files?.[0]);
-                                            event.target.value = '';
-                                        }}
-                                    />
-                                    <Icon icon="mdi:tray-arrow-up" className="mb-2 h-6 w-6" />
-                                    <span className="font-medium text-foreground">
-                                        {uploadedFileName ? uploadedFileName : 'Drop file'}
-                                    </span>
-                                    <span className="mt-1 text-xs">
-                                        {uploadedFileText ? 'Ready to inject.' : 'Drag a text/CSV file here or click to upload'}
-                                    </span>
-                                </label>
-                            ) : null}
-
-                            {activeComposerMode === 'camera' ? (
-                                <label
-                                    className={[
-                                        'flex min-h-[128px] flex-1 cursor-pointer flex-col gap-3 rounded-md border border-dashed bg-background p-3 transition-colors',
-                                        isStreaming ? 'pointer-events-none opacity-60' : 'border-secondary/30 hover:border-primary/50',
-                                    ].filter(Boolean).join(' ')}
-                                >
-                                    <input
-                                        type="file"
-                                        accept="image/*"
-                                        capture="environment"
-                                        className="sr-only"
-                                        disabled={isStreaming}
-                                        onChange={(event) => {
-                                            void handleCameraImage(event.target.files?.[0]);
-                                            event.target.value = '';
-                                        }}
-                                    />
-                                    <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-md bg-muted/40">
-                                        {cameraImageUrl ? (
-                                            <img src={cameraImageUrl} alt={cameraImageName || 'Camera capture'} className="max-h-36 w-full object-contain" />
-                                        ) : (
-                                            <div className="text-center text-sm text-muted-foreground">
-                                                <Icon icon="mdi:camera-outline" className="mx-auto mb-2 h-7 w-7" />
-                                                <p className="font-medium text-foreground">Camera capture</p>
-                                                <p className="mt-1 text-xs">Click to take or upload a receipt image</p>
-                                            </div>
-                                        )}
-                                    </div>
-                                </label>
-                            ) : null}
-
-                            {activeComposerMode === 'voice' ? (
-                                <div className="flex min-h-[128px] flex-1 flex-col gap-3 rounded-md border border-input bg-background p-3">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                        <Button
-                                            type="button"
-                                            className="h-9 rounded-full px-4"
-                                            onClick={isRecordingVoice ? stopVoiceRecording : startVoiceRecording}
-                                            disabled={isStreaming}
-                                        >
-                                            <Icon icon={isRecordingVoice ? 'mdi:stop-circle-outline' : 'mdi:microphone-outline'} className="h-4 w-4" />
-                                            {isRecordingVoice ? 'Stop' : 'Record'}
-                                        </Button>
-                                        {voiceAudioUrl ? (
-                                            <audio className="h-9 max-w-full" src={voiceAudioUrl} controls />
-                                        ) : (
-                                            <span className="text-xs text-muted-foreground">
-                                                {isRecordingVoice ? 'Recording...' : 'Record audio, then add a transcript or summary.'}
-                                            </span>
-                                        )}
-                                    </div>
-                                    <Textarea
-                                        className="min-h-[72px] resize-none text-sm"
-                                        value={voiceNote}
-                                        onChange={(event) => {
-                                            setVoiceNote(event.target.value);
-                                            resetStreamPreview();
-                                        }}
-                                        placeholder="Voice transcript or short summary"
-                                        disabled={isStreaming}
-                                    />
-                                </div>
-                            ) : null}
-
-                            <div className="mt-auto flex flex-col gap-3 lg:flex-row lg:items-center">
-                                {activeComposerMode === 'type' || activeComposerMode === 'voice' ? (
-                                    <Button
-                                        className="h-9 px-5 rounded-full shadow-sm"
-                                        onClick={addTypedTransaction}
-                                        disabled={!hasManualComposerInput || isStreaming}
-                                    >
-                                        <Icon icon="mdi:plus-circle-outline" className="h-4 w-4" />
-                                        {isStreaming ? 'Adding...' : 'Add to Inbox'}
-                                    </Button>
-                                ) : null}
-                                {stagedSourceCount > 0 ? (
-                                    <span className="text-xs text-muted-foreground">
-                                        {stagedSourceCount} source{stagedSourceCount === 1 ? '' : 's'} ready
-                                    </span>
-                                ) : null}
-                                {uploadedFileText || cameraImageUrl || voiceAudioUrl || voiceNote.trim() ? (
-                                    <Button
-                                        type="button"
-                                        variant="outline"
-                                        className="h-9 rounded-full px-4"
-                                        onClick={() => {
-                                            clearUploadedFile();
-                                            clearCameraImage();
-                                            clearVoiceInput();
-                                        }}
-                                        disabled={isStreaming}
-                                    >
-                                        <Icon icon="mdi:close-circle-outline" className="h-4 w-4" />
-                                        Clear sources
-                                    </Button>
-                                ) : null}
-                            </div>
-                        </div>
-                        {msg ? <p className="mt-3 text-sm text-muted-foreground">{msg}</p> : null}
-                        {error ? <p className="mt-3 text-sm text-red-600">Error: {error}</p> : null}
+        <div className="flex flex-col gap-6">
+            {/* Top row: paste (left) + trace (right) */}
+            <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-2">
+                {/* 1. Paste / key-in */}
+                <div className="flex h-full min-h-[260px] flex-col gap-3 rounded-md border border-secondary/20 bg-muted/20 p-3">
+                    <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                        <Icon icon="mdi:bank-outline" className="h-4 w-4" />
+                        Paste bank transactions
                     </div>
-
-                    <div className="h-full min-w-0 max-w-full overflow-hidden">
-                        <div className="flex h-full min-h-[260px] w-full min-w-0 max-w-full flex-col overflow-hidden rounded-md border border-dashed border-secondary/30 bg-background px-4 py-3 text-xs text-muted-foreground shadow-sm">
-                            {previewItems.length > 0 || isStreaming ? (
-                                <div className="flex min-h-0 flex-1 flex-col gap-3">
-                                    <div className="flex shrink-0 flex-wrap items-center gap-2">
-                                        <span className="max-w-full rounded-full border border-secondary/20 bg-muted/40 px-2 py-1 font-medium text-foreground">
-                                            AI stream
-                                        </span>
-                                        {streamModel ? (
-                                            <span className="max-w-full truncate rounded-full border border-secondary/20 px-2 py-1">
-                                                Model: {streamModel}
-                                            </span>
-                                        ) : null}
-                                        {streamConfidence !== null ? (
-                                            <span className="max-w-full rounded-full border border-secondary/20 px-2 py-1">
-                                                Confidence: {Math.round(streamConfidence * 100)}%
-                                            </span>
-                                        ) : null}
-                                    </div>
-
-                                    <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                                        {previewItems.map((item, index) => (
-                                            <div key={`${item.event}-${index}`} className="flex min-w-0 gap-2">
-                                                <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-primary/80" />
-                                                <div className="min-w-0 flex-1">
-                                                    <p className="flex flex-wrap items-center gap-1.5 break-words text-foreground">
-                                                        <span className="font-medium">
-                                                            {item.title}{item.injectionText ? ':' : ''}
-                                                        </span>
-                                                        {item.injectionText ? (
-                                                            <span className="font-normal">{item.injectionText}</span>
-                                                        ) : null}
-                                                        {item.detail ? (
-                                                            <span className="font-normal text-muted-foreground">{item.detail}</span>
-                                                        ) : null}
-                                                        {item.pending ? (
-                                                            <span className="flex items-center gap-0.5 text-primary" aria-label="Waiting for typing">
-                                                                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.2s]" />
-                                                                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.1s]" />
-                                                                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
-                                                            </span>
-                                                        ) : null}
-                                                    </p>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-
-                                    {isStreaming ? (
-                                        <div className="flex shrink-0 items-center gap-2 border-t border-secondary/10 pt-2 text-muted-foreground">
-                                            <Icon icon="mdi:loading" className="h-4 w-4 animate-spin text-primary" />
-                                            <span>Thinking...</span>
-                                        </div>
-                                    ) : null}
-                                </div>
-                            ) : (
-                                <>
-                                    <p className="font-medium text-foreground">AI understands natural transaction notes.</p>
-                                    <p className="mt-2">Just type normally:</p>
-                                    <div className="mt-1 space-y-1">
-                                        <p>"paid rent"</p>
-                                        <p>"coffee with sam"</p>
-                                        <p>"uber after airport"</p>
-                                    </div>
-                                </>
-                            )}
-                        </div>
+                    <Textarea
+                        className="min-h-[128px] flex-1 resize-none font-mono text-xs"
+                        value={pasteText}
+                        onChange={(e) => setPasteText(e.target.value)}
+                        placeholder={
+                            'Paste rows: date  description  debit  credit  balance\n' +
+                            '2024-08-04\tACME FAST PAY\t\t9000.00\t51000.00\n' +
+                            '2024-08-06\tTRANSFER TO SELF\t3000.00\t\t48000.00'
+                        }
+                        disabled={isImporting}
+                    />
+                    <div className="flex flex-wrap items-center gap-3">
+                        <Button
+                            className="h-9 rounded-full px-5"
+                            onClick={importParsed}
+                            disabled={parsedPreview.length === 0 || isImporting}
+                        >
+                            <Icon icon="mdi:table-arrow-down" className="h-4 w-4" />
+                            {isImporting ? 'Importing…' : `Parse & import ${parsedPreview.length || ''}`.trim()}
+                        </Button>
+                        {pasteText.trim() ? (
+                            <span className="text-xs text-muted-foreground">
+                                {parsedPreview.length} row{parsedPreview.length === 1 ? '' : 's'} detected
+                            </span>
+                        ) : null}
                     </div>
+                    {msg ? <p className="text-sm text-muted-foreground">{msg}</p> : null}
+                    {error ? <p className="text-sm text-red-600">Error: {error}</p> : null}
                 </div>
 
-                <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-                    <Card className="shadow-none border-[#d8c6a1] bg-[#f8f1de]">
-                        <CardHeader className="p-4">
-                            <CardTitle className="text-base text-[#2b2f38]">Transactions</CardTitle>
-                        </CardHeader>
-                        <CardContent className="p-0">
-                            <div className="overflow-x-auto">
-                                <Table className="table-fixed">
-                                    <colgroup>
-                                        <col className="w-[76px]" />
-                                        <col />
-                                        <col className="w-[92px]" />
-                                        <col className="w-[72px]" />
-                                        <col className="w-[44px]" />
-                                    </colgroup>
+                {/* 2. Trace */}
+                <div className="flex h-full min-h-[260px] flex-col overflow-hidden rounded-md border border-dashed border-secondary/30 bg-background px-4 py-3 text-xs text-muted-foreground shadow-sm">
+                    <div className="mb-2 flex items-center gap-2">
+                        <span className="rounded-full border border-secondary/20 bg-muted/40 px-2 py-1 font-medium text-foreground">
+                            Trace
+                        </span>
+                        <span>what happened & why</span>
+                    </div>
+                    {parsedPreview.length > 0 && !isImporting ? (
+                        <div className="mb-2 rounded-md bg-muted/30 px-2 py-1 text-foreground">
+                            Preview: {parsedPreview.length} rows ready to import.
+                        </div>
+                    ) : null}
+                    <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+                        {trace.length === 0 && parsedPreview.length === 0 ? (
+                            <div className="space-y-1">
+                                <p className="font-medium text-foreground">
+                                    Paste your bank statement on the left.
+                                </p>
+                                <p>Each line is read into the table below (流水账).</p>
+                                <p>Select a deposit to link it to invoices.</p>
+                            </div>
+                        ) : null}
+                        {(parsedPreview.length > 0 && trace.length === 0
+                            ? parsedPreview.map((r) => ({
+                                  title: `${r.txn_date ?? '(no date)'} ${r.description}`,
+                                  detail: `${
+                                      r.credit != null
+                                          ? `+${formatMoney(r.credit)}`
+                                          : r.debit != null
+                                          ? `-${formatMoney(r.debit)}`
+                                          : '—'
+                                  } · ${r.note}`,
+                                  tone: r.txn_date ? ('ok' as const) : ('warn' as const),
+                              }))
+                            : trace
+                        ).map((item, i) => (
+                            <div key={i} className="flex min-w-0 gap-2">
+                                <span
+                                    className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
+                                        item.tone === 'warn' ? 'bg-amber-500' : 'bg-primary/80'
+                                    }`}
+                                />
+                                <div className="min-w-0 flex-1">
+                                    <p className="break-words text-foreground">{item.title}</p>
+                                    {item.detail ? (
+                                        <p className="break-words text-muted-foreground">{item.detail}</p>
+                                    ) : null}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            </div>
+
+            {/* 3. Bank transactions (流水账) */}
+            <Card className="shadow-none border-[#d8c6a1] bg-[#f8f1de]">
+                <CardHeader className="p-4">
+                    <CardTitle className="text-base text-[#2b2f38]">Bank Transactions</CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                    <div className="overflow-x-auto">
+                        <Table>
+                            <THeader>
+                                <TRow className="border-b border-[#d8c6a1]">
+                                    <THead className="px-3 text-[#1f3a67]">Date</THead>
+                                    <THead className="px-2 text-[#1f3a67]">Description</THead>
+                                    <THead className="px-2 text-right text-[#1f3a67]">Debit</THead>
+                                    <THead className="px-2 text-right text-[#1f3a67]">Credit</THead>
+                                    <THead className="px-2 text-right text-[#1f3a67]">Balance</THead>
+                                    <THead className="px-2 text-[#1f3a67]">Applied</THead>
+                                </TRow>
+                            </THeader>
+                            <TBody>
+                                {txns.map((t) => {
+                                    const isSel = t.id === selectedId;
+                                    const isCredit = num(t.credit) > 0;
+                                    const applied = num(t.applied_total);
+                                    const unapplied = num(t.unapplied);
+                                    return (
+                                        <TRow
+                                            key={t.id}
+                                            role="button"
+                                            tabIndex={0}
+                                            aria-selected={isSel}
+                                            className={[
+                                                'cursor-pointer border-b border-[#d8c6a1]/70 transition-colors last:border-b-0 hover:bg-[#efe4c7]',
+                                                isSel ? 'bg-[#efe4c7] shadow-[inset_3px_0_0_#1f3a67]' : '',
+                                            ]
+                                                .filter(Boolean)
+                                                .join(' ')}
+                                            onClick={() => setSelectedId(t.id)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter' || e.key === ' ') {
+                                                    e.preventDefault();
+                                                    setSelectedId(t.id);
+                                                }
+                                            }}
+                                        >
+                                            <TCell className="px-3 py-3 text-xs text-[#1f2f4a]">
+                                                {t.txn_date || '-'}
+                                            </TCell>
+                                            <TCell className="px-2 py-3 text-sm text-[#1f2f4a]">
+                                                {t.description || '(no description)'}
+                                            </TCell>
+                                            <TCell className="px-2 py-3 text-right font-mono text-sm tabular-nums text-[#7a2a2a]">
+                                                {num(t.debit) > 0 ? formatMoney(t.debit) : '—'}
+                                            </TCell>
+                                            <TCell className="px-2 py-3 text-right font-mono text-sm tabular-nums text-[#1f5a34]">
+                                                {num(t.credit) > 0 ? formatMoney(t.credit) : '—'}
+                                            </TCell>
+                                            <TCell className="px-2 py-3 text-right font-mono text-sm tabular-nums text-[#1f2f4a]">
+                                                {t.balance != null ? formatMoney(t.balance) : '—'}
+                                            </TCell>
+                                            <TCell className="px-2 py-3 text-xs">
+                                                {!isCredit ? (
+                                                    <span className="text-[#94a3b8]">—</span>
+                                                ) : t.paid_inv_ids.length > 0 ? (
+                                                    <span className="flex flex-wrap items-center gap-1">
+                                                        <Badge className="border-[#9fca9f] bg-[#e9f5e9] text-[#1f5a34]">
+                                                            {t.paid_inv_ids.length} inv
+                                                        </Badge>
+                                                        {unapplied > 0 ? (
+                                                            <span className="text-amber-600">
+                                                                unapplied {formatMoney(unapplied)}
+                                                            </span>
+                                                        ) : (
+                                                            <span className="text-[#1f5a34]">✓</span>
+                                                        )}
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-[#8a6d3b]">○ unlinked</span>
+                                                )}
+                                            </TCell>
+                                        </TRow>
+                                    );
+                                })}
+                                {loading ? (
+                                    <TRow>
+                                        <TCell colSpan={6} className="px-3 py-4 text-sm text-[#596986]">
+                                            Loading…
+                                        </TCell>
+                                    </TRow>
+                                ) : null}
+                                {!loading && txns.length === 0 ? (
+                                    <TRow>
+                                        <TCell colSpan={6} className="px-3 py-4 text-sm text-[#596986]">
+                                            No bank transactions yet. Paste a statement above.
+                                        </TCell>
+                                    </TRow>
+                                ) : null}
+                            </TBody>
+                        </Table>
+                    </div>
+                </CardContent>
+            </Card>
+
+            {/* 4. Reconcile (selected deposit -> invoices) */}
+            <Card className="shadow-none border-[#d8c6a1] bg-[#f8f1de]">
+                <CardHeader className="p-4 pb-3">
+                    <div className="flex flex-col gap-1">
+                        <CardTitle className="text-base text-[#2b2f38]">Reconcile to Invoices</CardTitle>
+                        <p className="text-xs text-[#506080]">
+                            Tick the invoices this deposit paid. One deposit can cover several invoices.
+                        </p>
+                    </div>
+                </CardHeader>
+                <CardContent className="p-4 pt-0">
+                    {!selectedTxn ? (
+                        <div className="flex min-h-[120px] items-center justify-center text-sm text-muted-foreground">
+                            Select a bank transaction.
+                        </div>
+                    ) : num(selectedTxn.credit) <= 0 ? (
+                        <div className="flex min-h-[120px] items-center justify-center text-sm text-muted-foreground">
+                            This is a debit/transfer — nothing to reconcile to invoices.
+                        </div>
+                    ) : reconcileLoading ? (
+                        <div className="flex min-h-[120px] items-center justify-center text-sm text-muted-foreground">
+                            <Icon icon="mdi:loading" className="mr-2 h-4 w-4 animate-spin" /> Loading candidates…
+                        </div>
+                    ) : (
+                        <div className="flex flex-col gap-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[#d8c6a1] bg-[#fdf8ec] px-3 py-2 text-sm">
+                                <span className="text-[#172033]">
+                                    Deposit {selectedTxn.txn_date || ''} ·{' '}
+                                    <span className="font-mono font-semibold">{formatMoney(depositAmount)}</span>
+                                </span>
+                                <span
+                                    className={
+                                        allocation.unapplied > 0 ? 'text-amber-600' : 'text-[#1f5a34]'
+                                    }
+                                >
+                                    Applied {formatMoney(selectedTotal)} / {formatMoney(depositAmount)}
+                                    {allocation.unapplied > 0
+                                        ? ` · unapplied ${formatMoney(allocation.unapplied)}`
+                                        : ' ✓'}
+                                </span>
+                            </div>
+
+                            <div className="overflow-x-auto rounded-md border border-[#9eb8dc]/70 bg-[#fdf8ec]/70">
+                                <Table>
                                     <THeader>
-                                        <TRow className="border-b border-[#d8c6a1]">
-                                            <THead className="overflow-hidden px-2 text-[#1f3a67]">Txn Date</THead>
-                                            <THead className="overflow-hidden px-1 text-[#1f3a67]">Description/Memo</THead>
-                                            <THead className="overflow-hidden px-2 text-right text-[#1f3a67]">Amount</THead>
-                                            <THead className="overflow-hidden px-2 text-[#1f3a67]">Status</THead>
-                                            <THead className="overflow-hidden px-1 text-right text-[#1f3a67]">Action</THead>
+                                        <TRow className="border-b border-[#6fa0d8]/60">
+                                            <THead className="w-10 px-2" />
+                                            <THead className="px-2 text-xs uppercase text-[#1f3a67]">Invoice</THead>
+                                            <THead className="px-2 text-xs uppercase text-[#1f3a67]">Client</THead>
+                                            <THead className="px-2 text-right text-xs uppercase text-[#1f3a67]">Total</THead>
+                                            <THead className="px-2 text-right text-xs uppercase text-[#1f3a67]">Balance due</THead>
+                                            <THead className="px-2 text-right text-xs uppercase text-[#1f3a67]">Will apply</THead>
                                         </TRow>
                                     </THeader>
                                     <TBody>
-                                        {pageData.map((entry) => {
-                                            const isSelected = entry.id === selectedEntry?.id;
-
+                                        {candidates.map((c: ReconcileCandidate) => {
+                                            const isOn = !!checked[c.inv_id];
+                                            const apply = allocation.alloc[c.inv_id] ?? 0;
                                             return (
                                                 <TRow
-                                                    key={entry.id}
-                                                    role="button"
-                                                    tabIndex={0}
-                                                    aria-selected={isSelected}
-                                                    className={[
-                                                        'cursor-pointer border-b border-[#d8c6a1]/70 transition-colors last:border-b-0 hover:bg-[#efe4c7]',
-                                                        isSelected ? 'bg-[#efe4c7] shadow-[inset_3px_0_0_#1f3a67]' : '',
-                                                    ].filter(Boolean).join(' ')}
-                                                    onClick={() => {
-                                                        setSelectedEntryId(entry.id);
-                                                        if (entry.id !== editingEntryId) cancelEditingEntry();
-                                                    }}
-                                                    onKeyDown={(event) => {
-                                                        if (event.key === 'Enter' || event.key === ' ') {
-                                                            event.preventDefault();
-                                                            setSelectedEntryId(entry.id);
-                                                            if (entry.id !== editingEntryId) cancelEditingEntry();
-                                                        }
-                                                    }}
+                                                    key={c.inv_id}
+                                                    className="border-b border-[#e2e8f0] last:border-b-0 hover:bg-[#f8fafc]"
                                                 >
-                                                    <TCell className="w-[76px] px-2 py-3 text-xs text-[#1f2f4a]">
-                                                        {entry.entry_date || '-'}
+                                                    <TCell className="px-2 py-2">
+                                                        <input
+                                                            type="checkbox"
+                                                            className="h-4 w-4 cursor-pointer"
+                                                            checked={isOn}
+                                                            onChange={(e) =>
+                                                                setChecked((prev) => ({
+                                                                    ...prev,
+                                                                    [c.inv_id]: e.target.checked,
+                                                                }))
+                                                            }
+                                                        />
                                                     </TCell>
-                                                    <TCell className="min-w-0 whitespace-normal px-1 py-3 text-sm text-[#1f2f4a]">
-                                                        <div className="line-clamp-2">
-                                                            <span>{entry.memo || 'No description'}</span>
-                                                            <span className="ml-1 text-xs font-normal text-[#6f7d95]">/ {getEntryLabel(entry)}</span>
-                                                        </div>
+                                                    <TCell className="px-2 py-2 text-xs font-medium text-[#172033]">
+                                                        {c.inv_number || c.inv_id.slice(0, 8)}
                                                     </TCell>
-                                                    <TCell className="w-[92px] px-2 py-3 text-right text-sm font-mono tabular-nums text-[#1f2f4a]">
-                                                        {formatMoney(getEntryTotal(entry))}
+                                                    <TCell className="px-2 py-2 text-xs text-[#506080]">
+                                                        {c.client_company_name || '—'}
                                                     </TCell>
-                                                    <TCell className="w-[72px] px-2 py-3 text-sm text-[#506080]">
-                                                        {getEntryStatus(entry)}
+                                                    <TCell className="px-2 py-2 text-right font-mono text-xs tabular-nums text-[#172033]">
+                                                        {formatMoney(c.inv_total)}
                                                     </TCell>
-                                                    <TCell className="w-[44px] px-1 py-3 text-right text-sm text-[#1f2f4a]">
-                                                        <DropdownMenu>
-                                                            <DropdownMenuTrigger asChild>
-                                                                <button
-                                                                    type="button"
-                                                                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#1f3a67] hover:bg-[#efe4c7]"
-                                                                    aria-label="Inbox transaction actions"
-                                                                    onClick={(event) => event.stopPropagation()}
-                                                                    onKeyDown={(event) => event.stopPropagation()}
-                                                                >
-                                                                    <Icon icon="mdi:dots-vertical" height={18} />
-                                                                </button>
-                                                            </DropdownMenuTrigger>
-                                                            <DropdownMenuContent align="end" className="w-36">
-                                                                <DropdownMenuItem
-                                                                    className="flex items-center gap-2"
-                                                                    onClick={(event) => {
-                                                                        event.stopPropagation();
-                                                                        startEditingEntry(entry);
-                                                                    }}
-                                                                >
-                                                                    <Icon icon="solar:pen-new-square-broken" height={16} />
-                                                                    <span>Edit</span>
-                                                                </DropdownMenuItem>
-                                                                <DropdownMenuItem
-                                                                    className="flex items-center gap-2 text-red-600 focus:text-red-600"
-                                                                    onClick={(event) => {
-                                                                        event.stopPropagation();
-                                                                        setEntryToDelete(entry);
-                                                                    }}
-                                                                >
-                                                                    <Icon icon="solar:trash-bin-minimalistic-outline" height={16} />
-                                                                    <span>Delete</span>
-                                                                </DropdownMenuItem>
-                                                            </DropdownMenuContent>
-                                                        </DropdownMenu>
+                                                    <TCell className="px-2 py-2 text-right font-mono text-xs tabular-nums text-[#172033]">
+                                                        {formatMoney(c.inv_balance_due ?? c.inv_total)}
+                                                    </TCell>
+                                                    <TCell
+                                                        className={`px-2 py-2 text-right font-mono text-xs tabular-nums ${
+                                                            apply > 0 ? 'text-[#1f5a34]' : 'text-[#94a3b8]'
+                                                        }`}
+                                                    >
+                                                        {apply > 0 ? formatMoney(apply) : '—'}
                                                     </TCell>
                                                 </TRow>
                                             );
                                         })}
-                                        {loading ? (
+                                        {candidates.length === 0 ? (
                                             <TRow>
-                                                <TCell className="px-3 py-4 text-sm text-[#596986]" colSpan={5}>
-                                                    Loading inbox transactions...
-                                                </TCell>
-                                            </TRow>
-                                        ) : null}
-                                        {!loading && entries.length === 0 ? (
-                                            <TRow>
-                                                <TCell className="px-3 py-4 text-sm text-[#596986]" colSpan={5}>
-                                                    No inbox transactions yet.
+                                                <TCell colSpan={6} className="px-3 py-4 text-sm text-[#64748b]">
+                                                    No outstanding invoices to match.
                                                 </TCell>
                                             </TRow>
                                         ) : null}
                                     </TBody>
                                 </Table>
                             </div>
-                            {entries.length > 0 ? (
-                                <div className="flex flex-col gap-4 p-4">
-                                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
-                                        <div className="flex gap-2 w-full sm:w-auto">
-                                            <Button
-                                                onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
-                                                disabled={!canPrev}
-                                                variant="secondary"
-                                                className="flex-1 sm:flex-none text-xs sm:text-sm"
-                                            >
-                                                Previous
-                                            </Button>
-                                            <Button
-                                                onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
-                                                disabled={!canNext}
-                                                className="flex-1 sm:flex-none text-xs sm:text-sm"
-                                            >
-                                                Next
-                                            </Button>
-                                        </div>
 
-                                        <div className="text-forest-black dark:text-white/90 text-xs xs:text-base whitespace-nowrap">
-                                            Page {pageIndex + 1} of {pageCount}
-                                        </div>
-                                    </div>
-                                </div>
-                            ) : null}
-                        </CardContent>
-                    </Card>
-
-                    <Card className="shadow-none border-[#d8c6a1] bg-[#f8f1de]">
-                        <CardHeader className="p-4 pb-3">
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                <div className="flex flex-col gap-1">
-                                    <CardTitle className="text-base text-[#2b2f38]">Journal Entry</CardTitle>
-                                    <p className="text-xs text-[#506080]">
-                                        Review the selected ledger entry before posting changes.
-                                    </p>
-                                </div>
-                                {selectedEntry ? (
-                                    <div className="flex shrink-0 items-center gap-2">
-                                        {isEditingSelectedEntry ? (
-                                            <>
-                                                <Button
-                                                    type="button"
-                                                    variant="outline"
-                                                    className="h-9 rounded-full px-4"
-                                                    onClick={cancelEditingEntry}
-                                                    disabled={isSavingEntry}
-                                                >
-                                                    Cancel
-                                                </Button>
-                                                <Button
-                                                    type="button"
-                                                    className="h-9 rounded-full px-4"
-                                                    onClick={saveEntryDraft}
-                                                    disabled={isSavingEntry || !isDraftBalanced || !isDraftComplete}
-                                                >
-                                                    {isSavingEntry ? (
-                                                        <Icon icon="mdi:loading" className="h-4 w-4 animate-spin" />
-                                                    ) : (
-                                                        <Icon icon="mdi:content-save-outline" className="h-4 w-4" />
-                                                    )}
-                                                    Save
-                                                </Button>
-                                            </>
-                                        ) : (
-                                            <Button
-                                                type="button"
-                                                className="h-9 rounded-full px-4"
-                                                onClick={() => startEditingEntry(selectedEntry)}
-                                            >
-                                                <Icon icon="solar:pen-new-square-broken" className="h-4 w-4" />
-                                                Edit
-                                            </Button>
-                                        )}
-                                    </div>
-                                ) : null}
-                            </div>
-                        </CardHeader>
-                        <CardContent className="p-0 pt-0 flex flex-col gap-3">
-                            {selectedEntry ? (
-                                <Card
-                                    className="shadow-none border-[#d8c6a1] rounded-md overflow-hidden"
-                                    style={ledgerPaperStyle}
+                            <div className="flex items-center justify-end gap-2">
+                                <Button
+                                    className="h-9 rounded-full px-5"
+                                    onClick={saveReconcile}
+                                    disabled={isSaving}
                                 >
-                                    <CardContent className="p-0 flex flex-col gap-6">
-                                        <div>
-                                        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                            {isEditingSelectedEntry && entryDraft ? (
-                                                <div className="min-w-0">
-                                                    <div className="flex flex-wrap items-center gap-2">
-                                                        <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-[#1f3a67]">
-                                                            {getEntryLabel(selectedEntry)}
-                                                        </span>
-                                                        <Badge className="border-[#d8c6a1] bg-[#fdf8ec] px-2 py-0.5 text-[#335376]">
-                                                            {getDisplayStatus(selectedEntry)}
-                                                        </Badge>
-                                                    </div>
-                                                    <Input
-                                                        className="mt-1.5 h-7 w-full max-w-[360px] border-[#b7c7df] bg-[#fdf8ec] px-2 text-sm font-semibold text-[#172033] shadow-none sm:max-w-[420px]"
-                                                        value={entryDraft.memo}
-                                                        onChange={(event) => updateDraftHeader('memo', event.target.value)}
-                                                        placeholder="Memo"
-                                                        disabled={isSavingEntry}
-                                                    />
-                                                    <Input
-                                                        type="date"
-                                                        className="mt-1 h-7 w-[135px] border-[#b7c7df] bg-[#fdf8ec] px-2 text-xs text-[#506080] shadow-none"
-                                                        value={entryDraft.entry_date}
-                                                        onChange={(event) => updateDraftHeader('entry_date', event.target.value)}
-                                                        disabled={isSavingEntry}
-                                                    />
-                                                </div>
-                                            ) : (
-                                                <div className="min-w-0">
-                                                    <div className="flex flex-wrap items-center gap-2">
-                                                        <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-[#1f3a67]">
-                                                            {getEntryLabel(selectedEntry)}
-                                                        </span>
-                                                        <Badge className="border-[#d8c6a1] bg-[#fdf8ec] px-2 py-0.5 text-[#335376]">
-                                                            {getDisplayStatus(selectedEntry)}
-                                                        </Badge>
-                                                    </div>
-                                                    <div className="mt-1.5 flex h-7 w-full max-w-[360px] items-center rounded-md border border-transparent px-2 text-sm font-semibold text-[#172033] sm:max-w-[420px]">
-                                                        <span className="truncate">{selectedEntry.memo || 'No memo'}</span>
-                                                    </div>
-                                                    <div className="mt-1 flex h-7 w-[135px] items-center rounded-md border border-transparent px-2 text-xs text-[#506080]">
-                                                        <span>{selectedEntry.entry_date || '-'}</span>
-                                                    </div>
-                                                </div>
-                                            )}
-                                            <div className="grid grid-cols-3 gap-2 lg:min-w-[300px]">
-                                                <div className="rounded-md border border-[#d8c6a1] bg-[#fdf8ec]/80 px-3 py-2">
-                                                    <div className="text-[11px] font-medium uppercase text-[#506080]">Debit</div>
-                                                    <div className="mt-1 font-mono text-sm font-semibold tabular-nums text-[#172033]">
-                                                        {formatMoney(isEditingSelectedEntry ? draftTotals.debit : selectedEntryTotals.debit)}
-                                                    </div>
-                                                </div>
-                                                <div className="rounded-md border border-[#d8c6a1] bg-[#fdf8ec]/80 px-3 py-2">
-                                                    <div className="text-[11px] font-medium uppercase text-[#506080]">Credit</div>
-                                                    <div className="mt-1 font-mono text-sm font-semibold tabular-nums text-[#172033]">
-                                                        {formatMoney(isEditingSelectedEntry ? draftTotals.credit : selectedEntryTotals.credit)}
-                                                    </div>
-                                                </div>
-                                                <div className="rounded-md border border-[#d8c6a1] bg-[#fdf8ec]/80 px-3 py-2">
-                                                    <div className="text-[11px] font-medium uppercase text-[#506080]">Diff</div>
-                                                    <div className={`mt-1 font-mono text-sm font-semibold tabular-nums ${Math.abs((isEditingSelectedEntry ? draftTotals : selectedEntryTotals).difference) < 0.005 ? 'text-[#15803d]' : 'text-[#dc2626]'}`}>
-                                                        {formatMoney(isEditingSelectedEntry ? draftTotals.difference : selectedEntryTotals.difference)}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                        <div className="overflow-x-auto border rounded-md border-[#9eb8dc]/70 bg-[#fdf8ec]/70">
-                                        <Table>
-                                            <THeader>
-                                                <TRow className="border-b border-[#6fa0d8]/60 bg-[#fdf8ec]/70">
-                                                    <THead className="w-[112px] min-w-[112px] px-2 text-xs uppercase text-[#1f3a67]">Type</THead>
-                                                    <THead className="min-w-48 px-2 text-xs uppercase text-[#1f3a67]">Account</THead>
-                                                    <THead className="w-24 min-w-24 px-2 text-right text-xs uppercase text-[#1f3a67]">Debit</THead>
-                                                    <THead className="w-24 min-w-24 px-2 text-right text-xs uppercase text-[#1f3a67]">Credit</THead>
-                                                </TRow>
-                                            </THeader>
-                                            <TBody>
-                                                {isEditingSelectedEntry && entryDraft ? (
-                                                    entryDraft.lines.map((line) => {
-                                                        const lineType = String(line.line_type ?? '').toLowerCase();
-
-                                                        return (
-                                                            <TRow key={line.client_id} className="border-b border-[#e2e8f0] last:border-b-0 hover:bg-[#f8fafc]">
-                                                                <TCell className="w-[112px] px-2 py-3 text-sm">
-                                                                    <div className="flex h-7 w-[96px] items-center whitespace-nowrap">
-                                                                        <Select
-                                                                            value={line.line_type}
-                                                                            onValueChange={(value) => updateDraftLine(line.client_id, {
-                                                                                line_type: value === 'credit' ? 'credit' : 'debit',
-                                                                            })}
-                                                                            disabled={isSavingEntry}
-                                                                        >
-                                                                            <SelectTrigger className={`h-7 w-[72px] gap-1 rounded-full border border-transparent bg-transparent pl-0 pr-1 text-xs font-medium shadow-none focus-visible:border-[#b7c7df] focus-visible:ring-1 focus-visible:ring-[#b7c7df] [&_svg]:size-3 ${lineType === 'debit' ? 'text-blue-700' : 'text-emerald-700'}`}>
-                                                                                <SelectValue />
-                                                                            </SelectTrigger>
-                                                                            <SelectContent className="text-xs">
-                                                                                <SelectItem className="py-1 text-xs" value="debit">Debit</SelectItem>
-                                                                                <SelectItem className="py-1 text-xs" value="credit">Credit</SelectItem>
-                                                                            </SelectContent>
-                                                                        </Select>
-                                                                        <button
-                                                                            type="button"
-                                                                            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[#94a3b8] hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-40"
-                                                                            onClick={() => removeDraftLine(line.client_id)}
-                                                                            disabled={isSavingEntry || entryDraft.lines.length <= 1}
-                                                                            aria-label="Remove journal line"
-                                                                        >
-                                                                            <Icon icon="mdi:trash-can-outline" height={16} />
-                                                                        </button>
-                                                                    </div>
-                                                                </TCell>
-                                                                <TCell className="px-2 py-3 text-xs font-medium text-[#172033]">
-                                                                    <Select
-                                                                        value={line.account_id || undefined}
-                                                                        onValueChange={(value) => updateDraftLine(line.client_id, { account_id: value })}
-                                                                        disabled={isSavingEntry}
-                                                                    >
-                                                                        <SelectTrigger className="h-7 min-w-[220px] rounded-md border border-transparent bg-transparent pl-0 pr-2 text-xs font-medium text-[#172033] shadow-none focus-visible:border-[#b7c7df] focus-visible:ring-1 focus-visible:ring-[#b7c7df]">
-                                                                            <SelectValue placeholder={getLineAccountLabel(line, accountLabelById) || 'Account'} />
-                                                                        </SelectTrigger>
-                                                                        <SelectContent className="text-xs">
-                                                                            {accounts.map((account) => (
-                                                                                <SelectItem className="py-1 text-xs" key={account.id} value={account.id}>
-                                                                                    {getAccountLabel(account)}
-                                                                                </SelectItem>
-                                                                            ))}
-                                                                        </SelectContent>
-                                                                    </Select>
-                                                                </TCell>
-                                                                <TCell className="w-24 px-2 py-3 text-right">
-                                                                    {lineType === 'debit' ? (
-                                                                        <Input
-                                                                            type="text"
-                                                                            inputMode="decimal"
-                                                                            className="ml-auto h-7 w-[92px] rounded-md border border-transparent bg-transparent px-0 text-right font-mono text-sm tabular-nums text-[#172033] shadow-none focus-visible:border-[#b7c7df] focus-visible:ring-1 focus-visible:ring-[#b7c7df]"
-                                                                            style={{ textAlign: 'right' }}
-                                                                            value={line.amount}
-                                                                            onChange={(event) => updateDraftLine(line.client_id, { amount: event.target.value })}
-                                                                            disabled={isSavingEntry}
-                                                                        />
-                                                                    ) : (
-                                                                        <span className="font-mono text-sm tabular-nums text-[#94a3b8]">-</span>
-                                                                    )}
-                                                                </TCell>
-                                                                <TCell className="w-24 px-2 py-3 text-right">
-                                                                    {lineType === 'credit' ? (
-                                                                        <Input
-                                                                            type="text"
-                                                                            inputMode="decimal"
-                                                                            className="ml-auto h-7 w-[92px] rounded-md border border-transparent bg-transparent px-0 text-right font-mono text-sm tabular-nums text-[#172033] shadow-none focus-visible:border-[#b7c7df] focus-visible:ring-1 focus-visible:ring-[#b7c7df]"
-                                                                            style={{ textAlign: 'right' }}
-                                                                            value={line.amount}
-                                                                            onChange={(event) => updateDraftLine(line.client_id, { amount: event.target.value })}
-                                                                            disabled={isSavingEntry}
-                                                                        />
-                                                                    ) : (
-                                                                        <span className="font-mono text-sm tabular-nums text-[#94a3b8]">-</span>
-                                                                    )}
-                                                                </TCell>
-                                                            </TRow>
-                                                        );
-                                                    })
-                                                ) : (
-                                                    (selectedEntry.lines ?? []).map((line, index) => {
-                                                        const lineType = String(line.line_type ?? '').toLowerCase();
-                                                        const amount = formatMoney(line.amount ?? 0);
-
-                                                        return (
-                                                            <TRow
-                                                                key={line.id ?? `${selectedEntry.id}-${index}`}
-                                                                className="border-b border-[#e2e8f0] last:border-b-0 hover:bg-[#f8fafc]"
-                                                            >
-                                                                <TCell className="w-[112px] px-2 py-3 text-sm">
-                                                                    <span className={`inline-flex rounded-full py-1 pr-2 text-xs font-medium ${lineType === 'debit' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                                                                        {line.line_type || '-'}
-                                                                    </span>
-                                                                </TCell>
-                                                                <TCell className="px-2 py-3 text-xs font-medium text-[#172033]">
-                                                                    {getLineAccountLabel(line, accountLabelById)}
-                                                                </TCell>
-                                                                <TCell className="w-24 px-2 py-3 text-right">
-                                                                    {lineType === 'debit' ? (
-                                                                        <Input
-                                                                            readOnly
-                                                                            tabIndex={-1}
-                                                                            className="ml-auto h-7 w-[92px] rounded-md border border-transparent bg-transparent px-0 text-right font-mono text-sm tabular-nums text-[#172033] shadow-none focus-visible:ring-0"
-                                                                            style={{ textAlign: 'right' }}
-                                                                            value={amount}
-                                                                        />
-                                                                    ) : (
-                                                                        <span className="font-mono text-sm tabular-nums text-[#94a3b8]">-</span>
-                                                                    )}
-                                                                </TCell>
-                                                                <TCell className="w-24 px-2 py-3 text-right">
-                                                                    {lineType === 'credit' ? (
-                                                                        <Input
-                                                                            readOnly
-                                                                            tabIndex={-1}
-                                                                            className="ml-auto h-7 w-[92px] rounded-md border border-transparent bg-transparent px-0 text-right font-mono text-sm tabular-nums text-[#172033] shadow-none focus-visible:ring-0"
-                                                                            style={{ textAlign: 'right' }}
-                                                                            value={amount}
-                                                                        />
-                                                                    ) : (
-                                                                        <span className="font-mono text-sm tabular-nums text-[#94a3b8]">-</span>
-                                                                    )}
-                                                                </TCell>
-                                                            </TRow>
-                                                        );
-                                                    })
-                                                )}
-                                                {(!isEditingSelectedEntry && (selectedEntry.lines ?? []).length === 0) ||
-                                                (isEditingSelectedEntry && entryDraft && entryDraft.lines.length === 0) ? (
-                                                    <TRow>
-                                                        <TCell className="px-4 py-4 text-sm text-[#64748b]" colSpan={4}>
-                                                            No lines found.
-                                                        </TCell>
-                                                    </TRow>
-                                                ) : null}
-                                                {isEditingSelectedEntry && entryDraft ? (
-                                                    <TRow className="border-t border-[#dbe4f0] bg-[#f8fafc]">
-                                                        <TCell className="px-4 py-2" colSpan={4}>
-                                                            <div className="flex flex-col gap-2 text-xs sm:flex-row sm:items-center sm:justify-between">
-                                                                <span className={isDraftBalanced ? 'text-[#15803d]' : 'text-[#dc2626]'}>
-                                                                    {isDraftBalanced ? 'Entry is balanced.' : 'Debit and credit totals must match before saving.'}
-                                                                </span>
-                                                                <Button
-                                                                    type="button"
-                                                                    variant="outline"
-                                                                    className="h-7 rounded-full border-[#b7c7df] px-3 text-xs text-[#1f3a67]"
-                                                                    onClick={addDraftLine}
-                                                                    disabled={isSavingEntry}
-                                                                >
-                                                                    <Icon icon="mdi:plus" className="h-3.5 w-3.5" />
-                                                                    Add line
-                                                                </Button>
-                                                            </div>
-                                                        </TCell>
-                                                    </TRow>
-                                                ) : null}
-                                            </TBody>
-                                        </Table>
-                                        </div>
-                                    </CardContent>
-                                </Card>
-                            ) : (
-                                <div className="flex min-h-[180px] items-center justify-center text-sm font-medium text-muted-foreground">
-                                    Select an inbox transaction.
-                                </div>
-                            )}
-                        </CardContent>
-                    </Card>
-                </div>
-            </div>
-        </>
+                                    {isSaving ? (
+                                        <Icon icon="mdi:loading" className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                        <Icon icon="mdi:link-variant" className="h-4 w-4" />
+                                    )}
+                                    Save reconcile
+                                </Button>
+                            </div>
+                        </div>
+                    )}
+                </CardContent>
+            </Card>
+        </div>
     );
 };
 
-export default Inbox;
-
-
-// 1. type/upload/camera/voice tabs in a window, not like tabes, feels not good.
-// 2. voice table remove "Record Record audio, then add a transcript or summary.", change the Add to Inbox to Record. and once start recording, change to Stop 
+export default BankStatement;
