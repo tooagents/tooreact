@@ -9,6 +9,7 @@ import { Textarea } from 'src/components/ui/textarea';
 import { formatMoney, toNumber } from 'src/core/format';
 import {
     BankTxn,
+    InterpretedTxn,
     oBankAPI,
     ReconcileCandidate,
     ReconcileView,
@@ -28,7 +29,13 @@ type ParsedRow = {
     note: string; // trace note: how this line was read
 };
 
-type TraceItem = { title: string; detail?: string; tone?: 'ok' | 'warn' };
+type StreamItem = {
+    event: string;
+    title: string;
+    detail?: string;
+    tone?: 'ok' | 'warn';
+    pending?: boolean; // still being typed — shows the bouncing dots
+};
 
 const DATE_PATTERNS: Array<(t: string) => string | null> = [
     // 2024-08-23
@@ -66,7 +73,12 @@ const parseAmount = (token: string | undefined): number | null => {
 const splitLine = (line: string): string[] => {
     if (line.includes('\t')) return line.split('\t').map((c) => c.trim());
     if (line.includes(',')) return line.split(',').map((c) => c.trim());
-    return line.split(/\s{2,}/).map((c) => c.trim()).filter(Boolean);
+    // 2+ spaces usually mark column boundaries (Excel / PDF copy).
+    const wide = line.split(/\s{2,}/).map((c) => c.trim()).filter(Boolean);
+    if (wide.length >= 2) return wide;
+    // Fall back to single-space tokens so key-in and single-space pastes still
+    // read — parseRow re-joins the leading text back into the description.
+    return line.split(/\s+/).map((c) => c.trim()).filter(Boolean);
 };
 
 /**
@@ -142,6 +154,166 @@ const parsePaste = (text: string): ParsedRow[] => {
 };
 
 /* ------------------------------------------------------------------ */
+/* Live "AI-like" interpretation (mirrors WorkSpace composer)          */
+/* ------------------------------------------------------------------ */
+
+const money = (v: number | null) => (v == null ? null : formatMoney(v));
+
+// One parsed row → a human-readable line describing how it was read.
+const describeRow = (row: ParsedRow): StreamItem => {
+    const dir =
+        row.credit != null
+            ? `+${money(row.credit)} in`
+            : row.debit != null
+            ? `-${money(row.debit)} out`
+            : '—';
+    const bal = row.balance != null ? ` · balance ${money(row.balance)}` : '';
+    return {
+        event: 'row_read',
+        title: `${row.txn_date ?? '(no date)'} · ${row.description}`,
+        detail: `${dir} · read as ${row.note}${bal}`,
+        tone: row.txn_date ? 'ok' : 'warn',
+    };
+};
+
+// An AI-interpreted row (strings from the stream) → a stream line.
+const describeInterpreted = (row: InterpretedTxn): StreamItem => {
+    const credit = row.credit != null ? toNumber(row.credit) : null;
+    const debit = row.debit != null ? toNumber(row.debit) : null;
+    const balance = row.balance != null ? toNumber(row.balance) : null;
+    const cfg = typeConfig(row.type);
+    const parts = [
+        cfg.label,
+        credit != null ? `+${formatMoney(credit)} in` : debit != null ? `-${formatMoney(debit)} out` : '—',
+    ];
+    if (balance != null) parts.push(`balance ${formatMoney(balance)}`);
+    return {
+        event: 'row_saved',
+        title: `${row.txn_date ?? '(no date)'} · ${row.description}`,
+        detail: parts.join(' · '),
+        tone: row.txn_date ? 'ok' : 'warn',
+    };
+};
+
+// SSE status frames from interpret_stream → human stream lines (WorkSpace-style).
+const formatBankStatus = (status: string, meta: Record<string, unknown>): StreamItem | null => {
+    switch (status) {
+        case 'start':
+        case 'reading_text':
+            return null;
+        case 'calling_ai_model':
+            return {
+                event: status,
+                title: 'Calling AI model',
+                detail: typeof meta.model === 'string' ? `Model: ${meta.model}` : undefined,
+            };
+        case 'transactions_found':
+            return { event: status, title: `Understood ${String(meta.count ?? 0)} transactions` };
+        case 'row_saved':
+            return describeInterpreted(meta as unknown as InterpretedTxn);
+        case 'import_summary':
+            return null;
+        default:
+            return { event: status, title: status.replace(/_/g, ' ') };
+    }
+};
+
+/**
+ * Build the live interpretation shown on the right as the user types or pastes.
+ * Complete lines (anything before the final line break, or all lines when the
+ * text ends in a newline) are read into finished items immediately. The final
+ * line still being typed shows as a pending "reading…" item so the panel keeps
+ * up with each keystroke — like an AI narrating what it sees.
+ */
+const getLiveInterpretation = (text: string): StreamItem[] => {
+    if (text.trim().length === 0) return [];
+
+    const endsComplete = /\r?\n$/.test(text);
+    const rawLines = text.split(/\r?\n/);
+    const trailing = endsComplete ? '' : rawLines.pop() ?? '';
+
+    const items: StreamItem[] = [];
+    rawLines
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .forEach((line, i) => {
+            const row = parseRow(line, i);
+            if (row) items.push(describeRow(row));
+            else items.push({ event: 'row_skip', title: line, detail: 'no amount found — skipped', tone: 'warn' });
+        });
+
+    const partial = trailing.trim();
+    if (partial) {
+        const row = parseRow(partial, items.length);
+        items.push(
+            row
+                ? { ...describeRow(row), event: 'row_reading', pending: true }
+                : { event: 'row_reading', title: partial, detail: 'reading…', pending: true },
+        );
+    }
+
+    return items;
+};
+
+/* ------------------------------------------------------------------ */
+/* Transaction type visual config                                      */
+/* ------------------------------------------------------------------ */
+
+// How each Gemini-assigned type looks and behaves in the ledger.
+//  rail   — left accent colour on the row
+//  chip   — badge background / text / border
+//  icon   — iconify id shown on the rail
+//  reconcile — what the detail panel offers for this type
+type TypeConfig = {
+    label: string;
+    icon: string;
+    rail: string;
+    chip: string;
+    reconcile: 'invoice' | 'receipt' | 'none';
+};
+
+const TYPE_CONFIG: Record<string, TypeConfig> = {
+    invoice: {
+        label: 'Invoice',
+        icon: 'mdi:file-document-outline',
+        rail: '#1f5a34',
+        chip: 'border-[#9fca9f] bg-[#e9f5e9] text-[#1f5a34]',
+        reconcile: 'invoice',
+    },
+    expense: {
+        label: 'Expense',
+        icon: 'mdi:cart-outline',
+        rail: '#8a6d3b',
+        chip: 'border-[#e0cfa0] bg-[#faf3df] text-[#8a6d3b]',
+        reconcile: 'receipt',
+    },
+    transfer: {
+        label: 'Transfer',
+        icon: 'mdi:swap-horizontal',
+        rail: '#3b5b8a',
+        chip: 'border-[#a9bfe0] bg-[#eaf0fb] text-[#3b5b8a]',
+        reconcile: 'none',
+    },
+    opening_balance: {
+        label: 'Opening',
+        icon: 'mdi:bank-outline',
+        rail: '#5a5a5a',
+        chip: 'border-[#cbd0d8] bg-[#eef0f3] text-[#4b5563]',
+        reconcile: 'none',
+    },
+    other: {
+        label: 'Other',
+        icon: 'mdi:help-circle-outline',
+        rail: '#94a3b8',
+        chip: 'border-[#d3dae3] bg-[#f1f4f8] text-[#64748b]',
+        reconcile: 'none',
+    },
+};
+
+const typeConfig = (type: string | null | undefined): TypeConfig =>
+    TYPE_CONFIG[String(type || 'other')] ?? TYPE_CONFIG.other;
+
+/* ------------------------------------------------------------------ */
 /* Component                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -157,8 +329,8 @@ const BankStatement = () => {
     const [pasteText, setPasteText] = useState('');
     const [isImporting, setIsImporting] = useState(false);
 
-    // Trace
-    const [trace, setTrace] = useState<TraceItem[]>([]);
+    // AI-like stream (live interpretation while typing/pasting, then import steps)
+    const [streamItems, setStreamItems] = useState<StreamItem[]>([]);
 
     // Selection + reconcile
     const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -168,6 +340,14 @@ const BankStatement = () => {
     const [isSaving, setIsSaving] = useState(false);
 
     const parsedPreview = useMemo(() => parsePaste(pasteText), [pasteText]);
+    const liveItems = useMemo(() => getLiveInterpretation(pasteText), [pasteText]);
+
+    // Right panel content: live interpretation while composing, the import
+    // steps while importing, and the final summary once import finishes.
+    const previewItems = useMemo<StreamItem[]>(
+        () => (!isImporting && pasteText.trim() ? liveItems : streamItems),
+        [isImporting, pasteText, liveItems, streamItems],
+    );
 
     const refresh = async (preferId?: string | null) => {
         setLoading(true);
@@ -197,14 +377,17 @@ const BankStatement = () => {
         [txns, selectedId],
     );
 
-    // Load reconcile view whenever a credit row is selected.
+    // What the detail panel offers for the selected row, driven by its AI type.
+    const selectedCfg = useMemo(() => typeConfig(selectedTxn?.type), [selectedTxn?.type]);
+    const reconcileMode = selectedCfg.reconcile; // 'invoice' | 'receipt' | 'none'
+
+    // Load invoice candidates only when an invoice row is selected.
     useEffect(() => {
         if (!selectedTxn) {
             setReconcile(null);
             return;
         }
-        // Only inflows (credits) reconcile to invoices.
-        if (num(selectedTxn.credit) <= 0) {
+        if (reconcileMode !== 'invoice') {
             setReconcile(null);
             setChecked({});
             return;
@@ -231,51 +414,48 @@ const BankStatement = () => {
         return () => {
             cancelled = true;
         };
-    }, [selectedTxn?.id]);
+    }, [selectedTxn?.id, reconcileMode]);
 
-    /* ---------------- import (paste -> DB) ---------------- */
+    /* ---------------- import (AI interpret paste/type -> DB) ---------------- */
 
     const importParsed = async () => {
-        if (parsedPreview.length === 0 || isImporting) return;
+        const text = pasteText.trim();
+        if (!text || isImporting) return;
         setIsImporting(true);
         setError(null);
         setMsg(null);
-        const newTrace: TraceItem[] = [
-            { title: `Split paste → ${parsedPreview.length} rows` },
-        ];
-        let firstId: string | null = null;
+        setStreamItems([]);
         try {
-            for (const row of parsedPreview) {
-                const created = await oBankAPI.postTxn({
-                    txn_date: row.txn_date,
-                    description: row.description,
-                    debit: row.debit,
-                    credit: row.credit,
-                    balance: row.balance,
-                    source: 'paste',
-                });
-                if (!firstId) firstId = created.id;
-                const dir =
-                    row.credit != null
-                        ? `+${formatMoney(row.credit)}`
-                        : row.debit != null
-                        ? `-${formatMoney(row.debit)}`
-                        : '—';
-                newTrace.push({
-                    title: `${row.txn_date ?? '(no date)'} ${row.description}`,
-                    detail: `${dir} · read as ${row.note}`,
-                    tone: row.txn_date ? 'ok' : 'warn',
-                });
-            }
-            newTrace.push({ title: `Imported ${parsedPreview.length} transactions`, tone: 'ok' });
-            setTrace(newTrace);
+            const result = await oBankAPI.interpretStream(text, (event, payload) => {
+                if (event === 'status') {
+                    const status = String(payload.status || 'working');
+                    const meta =
+                        payload.meta && typeof payload.meta === 'object'
+                            ? (payload.meta as Record<string, unknown>)
+                            : {};
+                    const item = formatBankStatus(status, meta);
+                    if (item) setStreamItems((prev) => [...prev, item]);
+                }
+            });
+            setStreamItems((prev) => [
+                ...prev,
+                {
+                    event: 'import_done',
+                    title: `Imported ${result.imported_count} transaction${
+                        result.imported_count === 1 ? '' : 's'
+                    }`,
+                    tone: 'ok',
+                },
+            ]);
             setPasteText('');
-            setMsg(`Imported ${parsedPreview.length} transactions.`);
-            await refresh(firstId);
+            setMsg(`Imported ${result.imported_count} transactions.`);
+            await refresh(result.first_id);
         } catch (e: any) {
-            newTrace.push({ title: 'Import failed', detail: e?.message, tone: 'warn' });
-            setTrace(newTrace);
-            setError(e?.message || 'Failed to import transactions.');
+            setStreamItems((prev) => [
+                ...prev,
+                { event: 'import_error', title: 'Import failed', detail: e?.message, tone: 'warn' },
+            ]);
+            setError(e?.message || 'Failed to interpret transactions.');
         } finally {
             setIsImporting(false);
         }
@@ -321,9 +501,10 @@ const BankStatement = () => {
                     ? `Reconciled. ${formatMoney(allocation.unapplied)} left unapplied.`
                     : 'Reconciled — deposit fully applied.',
             );
-            setTrace((prev) => [
+            setStreamItems((prev) => [
                 ...prev,
                 {
+                    event: 'reconciled',
                     title: `Reconciled ${selectedTxn.txn_date ?? ''} ${formatMoney(depositAmount)}`,
                     detail: `${allocations.length} invoice(s)${
                         allocation.unapplied > 0 ? ` · unapplied ${formatMoney(allocation.unapplied)}` : ' · exact'
@@ -345,21 +526,21 @@ const BankStatement = () => {
 
     return (
         <div className="flex flex-col gap-6">
-            {/* Top row: paste (left) + trace (right) */}
+            {/* Top row: compose (left) + live AI-like interpretation (right) */}
             <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-2">
                 {/* 1. Paste / key-in */}
                 <div className="flex h-full min-h-[260px] flex-col gap-3 rounded-md border border-secondary/20 bg-muted/20 p-3">
                     <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
                         <Icon icon="mdi:bank-outline" className="h-4 w-4" />
-                        Paste bank transactions
+                        Paste or type bank transactions
                     </div>
                     <Textarea
                         className="min-h-[128px] flex-1 resize-none font-mono text-xs"
                         value={pasteText}
                         onChange={(e) => setPasteText(e.target.value)}
                         placeholder={
-                            'Paste rows: date  description  debit  credit  balance\n' +
-                            '2024-08-04\tACME FAST PAY\t\t9000.00\t51000.00\n' +
+                            'Paste or key in rows — one per line. Anything works:\n' +
+                            '2024-08-04 ACME FAST PAY 9000.00 51000.00\n' +
                             '2024-08-06\tTRANSFER TO SELF\t3000.00\t\t48000.00'
                         }
                         disabled={isImporting}
@@ -368,14 +549,20 @@ const BankStatement = () => {
                         <Button
                             className="h-9 rounded-full px-5"
                             onClick={importParsed}
-                            disabled={parsedPreview.length === 0 || isImporting}
+                            disabled={!pasteText.trim() || isImporting}
                         >
-                            <Icon icon="mdi:table-arrow-down" className="h-4 w-4" />
-                            {isImporting ? 'Importing…' : `Parse & import ${parsedPreview.length || ''}`.trim()}
+                            {isImporting ? (
+                                <Icon icon="mdi:loading" className="h-4 w-4 animate-spin" />
+                            ) : (
+                                <Icon icon="mdi:auto-fix" className="h-4 w-4" />
+                            )}
+                            {isImporting ? 'Interpreting…' : 'Interpret & import'}
                         </Button>
-                        {pasteText.trim() ? (
+                        {pasteText.trim() && !isImporting ? (
                             <span className="text-xs text-muted-foreground">
-                                {parsedPreview.length} row{parsedPreview.length === 1 ? '' : 's'} detected
+                                {parsedPreview.length > 0
+                                    ? `~${parsedPreview.length} row${parsedPreview.length === 1 ? '' : 's'} · AI will confirm`
+                                    : 'AI will read this on import'}
                             </span>
                         ) : null}
                     </div>
@@ -383,64 +570,87 @@ const BankStatement = () => {
                     {error ? <p className="text-sm text-red-600">Error: {error}</p> : null}
                 </div>
 
-                {/* 2. Trace */}
-                <div className="flex h-full min-h-[260px] flex-col overflow-hidden rounded-md border border-dashed border-secondary/30 bg-background px-4 py-3 text-xs text-muted-foreground shadow-sm">
-                    <div className="mb-2 flex items-center gap-2">
-                        <span className="rounded-full border border-secondary/20 bg-muted/40 px-2 py-1 font-medium text-foreground">
-                            Trace
-                        </span>
-                        <span>what happened & why</span>
-                    </div>
-                    {parsedPreview.length > 0 && !isImporting ? (
-                        <div className="mb-2 rounded-md bg-muted/30 px-2 py-1 text-foreground">
-                            Preview: {parsedPreview.length} rows ready to import.
-                        </div>
-                    ) : null}
-                    <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                        {trace.length === 0 && parsedPreview.length === 0 ? (
-                            <div className="space-y-1">
-                                <p className="font-medium text-foreground">
-                                    Paste your bank statement on the left.
-                                </p>
-                                <p>Each line is read into the table below (流水账).</p>
-                                <p>Select a deposit to link it to invoices.</p>
-                            </div>
-                        ) : null}
-                        {(parsedPreview.length > 0 && trace.length === 0
-                            ? parsedPreview.map((r) => ({
-                                  title: `${r.txn_date ?? '(no date)'} ${r.description}`,
-                                  detail: `${
-                                      r.credit != null
-                                          ? `+${formatMoney(r.credit)}`
-                                          : r.debit != null
-                                          ? `-${formatMoney(r.debit)}`
-                                          : '—'
-                                  } · ${r.note}`,
-                                  tone: r.txn_date ? ('ok' as const) : ('warn' as const),
-                              }))
-                            : trace
-                        ).map((item, i) => (
-                            <div key={i} className="flex min-w-0 gap-2">
-                                <span
-                                    className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
-                                        item.tone === 'warn' ? 'bg-amber-500' : 'bg-primary/80'
-                                    }`}
-                                />
-                                <div className="min-w-0 flex-1">
-                                    <p className="break-words text-foreground">{item.title}</p>
-                                    {item.detail ? (
-                                        <p className="break-words text-muted-foreground">{item.detail}</p>
-                                    ) : null}
+                {/* 2. Live interpretation stream */}
+                <div className="h-full min-w-0 max-w-full overflow-hidden">
+                    <div className="flex h-full min-h-[260px] w-full min-w-0 max-w-full flex-col overflow-hidden rounded-md border border-dashed border-secondary/30 bg-background px-4 py-3 text-xs text-muted-foreground shadow-sm">
+                        {previewItems.length > 0 || isImporting ? (
+                            <div className="flex min-h-0 flex-1 flex-col gap-3">
+                                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                                    <span className="max-w-full rounded-full border border-secondary/20 bg-muted/40 px-2 py-1 font-medium text-foreground">
+                                        {isImporting ? 'AI stream' : 'Preview'}
+                                    </span>
+                                    <span>
+                                        {isImporting
+                                            ? 'Gemini reading & saving each line'
+                                            : 'draft reading — AI confirms on import'}
+                                    </span>
                                 </div>
+
+                                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+                                    {previewItems.map((item, index) => (
+                                        <div key={`${item.event}-${index}`} className="flex min-w-0 gap-2">
+                                            <span
+                                                className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
+                                                    item.tone === 'warn' ? 'bg-amber-500' : 'bg-primary/80'
+                                                }`}
+                                            />
+                                            <div className="min-w-0 flex-1">
+                                                <p className="flex flex-wrap items-center gap-1.5 break-words text-foreground">
+                                                    <span className="font-medium">{item.title}</span>
+                                                    {item.detail ? (
+                                                        <span className="font-normal text-muted-foreground">
+                                                            {item.detail}
+                                                        </span>
+                                                    ) : null}
+                                                    {item.pending ? (
+                                                        <span
+                                                            className="flex items-center gap-0.5 text-primary"
+                                                            aria-label="Reading"
+                                                        >
+                                                            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.2s]" />
+                                                            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.1s]" />
+                                                            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
+                                                        </span>
+                                                    ) : null}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {isImporting ? (
+                                    <div className="flex shrink-0 items-center gap-2 border-t border-secondary/10 pt-2 text-muted-foreground">
+                                        <Icon icon="mdi:loading" className="h-4 w-4 animate-spin text-primary" />
+                                        <span>AI is reading your statement…</span>
+                                    </div>
+                                ) : null}
                             </div>
-                        ))}
+                        ) : (
+                            <>
+                                <p className="font-medium text-foreground">
+                                    Paste or type your bank statement on the left.
+                                </p>
+                                <p className="mt-2">Each line is read as you go:</p>
+                                <div className="mt-1 space-y-1">
+                                    <p>"2024-08-04 ACME FAST PAY 9000 51000"</p>
+                                    <p>"aug 6 transfer to self -3000"</p>
+                                </div>
+                                <p className="mt-2">
+                                    On import, AI classifies each row — invoice, expense, transfer or opening
+                                    balance — and only the matchable ones ask to reconcile.
+                                </p>
+                            </>
+                        )}
                     </div>
                 </div>
             </div>
 
-            {/* 3. Bank transactions (流水账) */}
-            <Card className="shadow-none border-[#d8c6a1] bg-[#f8f1de]">
-                <CardHeader className="p-4">
+            {/* Master–detail: transactions list (left) + reconcile detail (right) */}
+            <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-2">
+
+            {/* 3. Bank transactions (流水账) — card-style rows */}
+            <Card className="gap-4 shadow-none border-[#d8c6a1] bg-[#f8f1de]">
+                <CardHeader className="p-4 pb-1">
                     <CardTitle className="text-base text-[#2b2f38]">Bank Transactions</CardTitle>
                 </CardHeader>
                 <CardContent className="p-0">
@@ -448,20 +658,25 @@ const BankStatement = () => {
                         <Table>
                             <THeader>
                                 <TRow className="border-b border-[#d8c6a1]">
-                                    <THead className="px-3 text-[#1f3a67]">Date</THead>
-                                    <THead className="px-2 text-[#1f3a67]">Description</THead>
-                                    <THead className="px-2 text-right text-[#1f3a67]">Debit</THead>
-                                    <THead className="px-2 text-right text-[#1f3a67]">Credit</THead>
-                                    <THead className="px-2 text-right text-[#1f3a67]">Balance</THead>
-                                    <THead className="px-2 text-[#1f3a67]">Applied</THead>
+                                    <THead className="h-7 w-9 pl-4 pr-0" />
+                                    <THead className="h-7 pt-0 pl-1 pr-2 align-top text-xs font-normal text-[#1f3a67]">
+                                        Description
+                                    </THead>
+                                    <THead className="h-7 pt-0 pr-2 text-right align-top text-xs font-normal text-[#1f3a67]">
+                                        Amount
+                                    </THead>
+                                    <THead className="h-7 pt-0 pl-2 pr-4 text-right align-top text-xs font-normal text-[#1f3a67]">
+                                        Reconcile
+                                    </THead>
                                 </TRow>
                             </THeader>
                             <TBody>
                                 {txns.map((t) => {
                                     const isSel = t.id === selectedId;
-                                    const isCredit = num(t.credit) > 0;
-                                    const applied = num(t.applied_total);
+                                    const cfg = typeConfig(t.type);
                                     const unapplied = num(t.unapplied);
+                                    const credit = num(t.credit);
+                                    const debit = num(t.debit);
                                     return (
                                         <TRow
                                             key={t.id}
@@ -470,10 +685,15 @@ const BankStatement = () => {
                                             aria-selected={isSel}
                                             className={[
                                                 'cursor-pointer border-b border-[#d8c6a1]/70 transition-colors last:border-b-0 hover:bg-[#efe4c7]',
-                                                isSel ? 'bg-[#efe4c7] shadow-[inset_3px_0_0_#1f3a67]' : '',
+                                                isSel ? 'bg-[#efe4c7]' : '',
                                             ]
                                                 .filter(Boolean)
                                                 .join(' ')}
+                                            style={{
+                                                boxShadow: `inset 4px 0 0 ${cfg.rail}${
+                                                    isSel ? ', inset 7px 0 0 #1f3a67' : ''
+                                                }`,
+                                            }}
                                             onClick={() => setSelectedId(t.id)}
                                             onKeyDown={(e) => {
                                                 if (e.key === 'Enter' || e.key === ' ') {
@@ -482,26 +702,52 @@ const BankStatement = () => {
                                                 }
                                             }}
                                         >
-                                            <TCell className="px-3 py-3 text-xs text-[#1f2f4a]">
-                                                {t.txn_date || '-'}
+                                            {/* Zone 1 — type icon on the rail */}
+                                            <TCell className="w-9 py-3 pl-4 pr-0 align-top">
+                                                <Icon
+                                                    icon={cfg.icon}
+                                                    className="h-4 w-4"
+                                                    style={{ color: cfg.rail }}
+                                                />
                                             </TCell>
-                                            <TCell className="px-2 py-3 text-sm text-[#1f2f4a]">
-                                                {t.description || '(no description)'}
+                                            {/* Zone 2 — description over "date · type" */}
+                                            <TCell className="min-w-0 py-3 pl-1 pr-2 align-top">
+                                                <div className="truncate text-xs text-[#1f2f4a]">
+                                                    {t.description || '(no description)'}
+                                                </div>
+                                                <div className="mt-0.5 font-mono text-xs tabular-nums text-[#6f7d95]">
+                                                    {(t.txn_date || '—')} · {cfg.label.toLowerCase()}
+                                                </div>
                                             </TCell>
-                                            <TCell className="px-2 py-3 text-right font-mono text-sm tabular-nums text-[#7a2a2a]">
-                                                {num(t.debit) > 0 ? formatMoney(t.debit) : '—'}
+                                            {/* Zone 3 — amount(s) with direction arrow over balance */}
+                                            <TCell className="whitespace-nowrap py-3 pr-2 text-right align-top">
+                                                {credit > 0 ? (
+                                                    <div className="font-mono text-xs tabular-nums text-[#1f5a34]">
+                                                        ↑ {formatMoney(t.credit)}
+                                                    </div>
+                                                ) : null}
+                                                {debit > 0 ? (
+                                                    <div className="font-mono text-xs tabular-nums text-[#7a2a2a]">
+                                                        ↓ {formatMoney(t.debit)}
+                                                    </div>
+                                                ) : null}
+                                                {credit <= 0 && debit <= 0 ? (
+                                                    <div className="font-mono text-xs tabular-nums text-[#94a3b8]">—</div>
+                                                ) : null}
+                                                {t.balance != null ? (
+                                                    <div className="mt-0.5 font-mono text-xs tabular-nums text-[#6f7d95]">
+                                                        bal {formatMoney(t.balance)}
+                                                    </div>
+                                                ) : null}
                                             </TCell>
-                                            <TCell className="px-2 py-3 text-right font-mono text-sm tabular-nums text-[#1f5a34]">
-                                                {num(t.credit) > 0 ? formatMoney(t.credit) : '—'}
-                                            </TCell>
-                                            <TCell className="px-2 py-3 text-right font-mono text-sm tabular-nums text-[#1f2f4a]">
-                                                {t.balance != null ? formatMoney(t.balance) : '—'}
-                                            </TCell>
-                                            <TCell className="px-2 py-3 text-xs">
-                                                {!isCredit ? (
-                                                    <span className="text-[#94a3b8]">—</span>
+                                            {/* Zone 4 — reconcile call-to-action, by type */}
+                                            <TCell className="whitespace-nowrap py-3 pl-2 pr-4 text-right align-top text-xs">
+                                                {cfg.reconcile === 'none' ? (
+                                                    <span className="text-[#94a3b8]">no match needed</span>
+                                                ) : cfg.reconcile === 'receipt' ? (
+                                                    <span className="text-[#8a6d3b]">● Attach receipt →</span>
                                                 ) : t.paid_inv_ids.length > 0 ? (
-                                                    <span className="flex flex-wrap items-center gap-1">
+                                                    <span className="inline-flex flex-wrap items-center justify-end gap-1">
                                                         <Badge className="border-[#9fca9f] bg-[#e9f5e9] text-[#1f5a34]">
                                                             {t.paid_inv_ids.length} inv
                                                         </Badge>
@@ -514,7 +760,7 @@ const BankStatement = () => {
                                                         )}
                                                     </span>
                                                 ) : (
-                                                    <span className="text-[#8a6d3b]">○ unlinked</span>
+                                                    <span className="text-[#1f5a34]">● Link invoice →</span>
                                                 )}
                                             </TCell>
                                         </TRow>
@@ -522,14 +768,14 @@ const BankStatement = () => {
                                 })}
                                 {loading ? (
                                     <TRow>
-                                        <TCell colSpan={6} className="px-3 py-4 text-sm text-[#596986]">
+                                        <TCell colSpan={4} className="px-4 py-4 text-sm text-[#596986]">
                                             Loading…
                                         </TCell>
                                     </TRow>
                                 ) : null}
                                 {!loading && txns.length === 0 ? (
                                     <TRow>
-                                        <TCell colSpan={6} className="px-3 py-4 text-sm text-[#596986]">
+                                        <TCell colSpan={4} className="px-4 py-4 text-sm text-[#596986]">
                                             No bank transactions yet. Paste a statement above.
                                         </TCell>
                                     </TRow>
@@ -540,14 +786,34 @@ const BankStatement = () => {
                 </CardContent>
             </Card>
 
-            {/* 4. Reconcile (selected deposit -> invoices) */}
+            {/* 4. Detail panel — content swaps by the selected row's type */}
             <Card className="shadow-none border-[#d8c6a1] bg-[#f8f1de]">
                 <CardHeader className="p-4 pb-3">
-                    <div className="flex flex-col gap-1">
-                        <CardTitle className="text-base text-[#2b2f38]">Reconcile to Invoices</CardTitle>
-                        <p className="text-xs text-[#506080]">
-                            Tick the invoices this deposit paid. One deposit can cover several invoices.
-                        </p>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-col gap-1">
+                            <CardTitle className="text-base text-[#2b2f38]">
+                                {reconcileMode === 'receipt'
+                                    ? 'Attach a Receipt'
+                                    : reconcileMode === 'invoice'
+                                    ? 'Reconcile to Invoices'
+                                    : 'Transaction Detail'}
+                            </CardTitle>
+                            <p className="text-xs text-[#506080]">
+                                {reconcileMode === 'receipt'
+                                    ? 'Match this expense to its receipt or bill.'
+                                    : reconcileMode === 'invoice'
+                                    ? 'Tick the invoices this deposit paid. One deposit can cover several invoices.'
+                                    : 'Transfers and opening balances need no matching.'}
+                            </p>
+                        </div>
+                        {selectedTxn ? (
+                            <Badge
+                                className={`inline-flex items-center gap-1 whitespace-nowrap ${selectedCfg.chip}`}
+                            >
+                                <Icon icon={selectedCfg.icon} className="h-3.5 w-3.5" />
+                                {selectedCfg.label}
+                            </Badge>
+                        ) : null}
                     </div>
                 </CardHeader>
                 <CardContent className="p-4 pt-0">
@@ -555,9 +821,35 @@ const BankStatement = () => {
                         <div className="flex min-h-[120px] items-center justify-center text-sm text-muted-foreground">
                             Select a bank transaction.
                         </div>
-                    ) : num(selectedTxn.credit) <= 0 ? (
-                        <div className="flex min-h-[120px] items-center justify-center text-sm text-muted-foreground">
-                            This is a debit/transfer — nothing to reconcile to invoices.
+                    ) : reconcileMode === 'none' ? (
+                        <div className="flex min-h-[120px] flex-col items-center justify-center gap-2 text-center text-sm text-muted-foreground">
+                            <Icon icon={selectedCfg.icon} className="h-7 w-7 text-[#94a3b8]" />
+                            <p>
+                                {selectedCfg.label === 'Transfer'
+                                    ? 'This is a transfer between your own accounts — nothing to reconcile.'
+                                    : selectedCfg.label === 'Opening'
+                                    ? 'This is an opening balance that seeds the ledger — nothing to reconcile.'
+                                    : 'Nothing to reconcile for this transaction.'}
+                            </p>
+                        </div>
+                    ) : reconcileMode === 'receipt' ? (
+                        <div className="flex flex-col gap-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[#d8c6a1] bg-[#fdf8ec] px-3 py-2 text-sm">
+                                <span className="text-[#172033]">
+                                    Expense {selectedTxn.txn_date || ''} ·{' '}
+                                    <span className="font-mono font-semibold">
+                                        {formatMoney(num(selectedTxn.debit))}
+                                    </span>
+                                </span>
+                            </div>
+                            <div className="flex min-h-[120px] flex-col items-center justify-center gap-3 rounded-md border border-dashed border-[#e0cfa0] bg-[#fdf8ec]/60 px-4 py-6 text-center text-sm text-muted-foreground">
+                                <Icon icon="mdi:receipt-text-outline" className="h-7 w-7 text-[#b99a5e]" />
+                                <p>No receipts to match yet.</p>
+                                <Button variant="outline" className="h-9 rounded-full px-4" disabled>
+                                    <Icon icon="mdi:tray-arrow-up" className="h-4 w-4" />
+                                    Upload receipt
+                                </Button>
+                            </div>
                         </div>
                     ) : reconcileLoading ? (
                         <div className="flex min-h-[120px] items-center justify-center text-sm text-muted-foreground">
@@ -667,6 +959,7 @@ const BankStatement = () => {
                     )}
                 </CardContent>
             </Card>
+            </div>
         </div>
     );
 };
