@@ -3,6 +3,8 @@ import { Icon } from '@iconify/react/dist/iconify.js';
 import { Badge } from 'src/components/ui/badge';
 import { Button } from 'src/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from 'src/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from 'src/components/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from 'src/components/ui/dropdown-menu';
 import { Input } from 'src/components/ui/input';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
 import { Textarea } from 'src/components/ui/textarea';
@@ -35,6 +37,15 @@ type StreamItem = {
     detail?: string;
     tone?: 'ok' | 'warn';
     pending?: boolean; // still being typed — shows the bouncing dots
+};
+
+// Editable fields of a bank row (edit dialog draft).
+type TxnDraft = {
+    txn_date: string;
+    description: string;
+    debit: string;
+    credit: string;
+    balance: string;
 };
 
 const DATE_PATTERNS: Array<(t: string) => string | null> = [
@@ -339,6 +350,13 @@ const BankStatement = () => {
     const [checked, setChecked] = useState<Record<string, boolean>>({});
     const [isSaving, setIsSaving] = useState(false);
 
+    // Row actions (3-dot menu): edit dialog + delete confirm
+    const [editingTxn, setEditingTxn] = useState<BankTxn | null>(null);
+    const [editDraft, setEditDraft] = useState<TxnDraft | null>(null);
+    const [isSavingEdit, setIsSavingEdit] = useState(false);
+    const [txnToDelete, setTxnToDelete] = useState<BankTxn | null>(null);
+    const [isDeletingTxn, setIsDeletingTxn] = useState(false);
+
     const parsedPreview = useMemo(() => parsePaste(pasteText), [pasteText]);
     const liveItems = useMemo(() => getLiveInterpretation(pasteText), [pasteText]);
 
@@ -520,11 +538,191 @@ const BankStatement = () => {
         }
     };
 
+    /* ---------------- row actions: edit + delete ---------------- */
+
+    const startEditingTxn = (txn: BankTxn) => {
+        setSelectedId(txn.id);
+        setEditingTxn(txn);
+        setEditDraft({
+            txn_date: txn.txn_date ?? '',
+            description: txn.description ?? '',
+            debit: txn.debit != null ? String(txn.debit) : '',
+            credit: txn.credit != null ? String(txn.credit) : '',
+            balance: txn.balance != null ? String(txn.balance) : '',
+        });
+        setError(null);
+        setMsg(null);
+    };
+
+    const closeEditDialog = () => {
+        if (isSavingEdit) return;
+        setEditingTxn(null);
+        setEditDraft(null);
+    };
+
+    const updateEditDraft = (field: keyof TxnDraft, value: string) => {
+        setEditDraft((cur) => (cur ? { ...cur, [field]: value } : cur));
+    };
+
+    const saveEditTxn = async () => {
+        if (!editingTxn || !editDraft || isSavingEdit) return;
+        setIsSavingEdit(true);
+        setError(null);
+        setMsg(null);
+        try {
+            const trimmed = (v: string) => (v.trim() ? v.trim() : null);
+            const numeric = (v: string) => (v.trim() ? Number(v) : null);
+            await oBankAPI.updateTxn(editingTxn.id, {
+                txn_date: trimmed(editDraft.txn_date),
+                description: trimmed(editDraft.description),
+                debit: numeric(editDraft.debit),
+                credit: numeric(editDraft.credit),
+                balance: numeric(editDraft.balance),
+            });
+            setEditingTxn(null);
+            setEditDraft(null);
+            setMsg('Bank transaction saved.');
+            await refresh(editingTxn.id);
+        } catch (e: any) {
+            setError(e?.message || 'Failed to save bank transaction.');
+        } finally {
+            setIsSavingEdit(false);
+        }
+    };
+
+    const confirmDeleteTxn = async () => {
+        if (!txnToDelete || isDeletingTxn) return;
+        setIsDeletingTxn(true);
+        setError(null);
+        setMsg(null);
+        try {
+            await oBankAPI.deleteTxn(txnToDelete.id);
+            const deletedId = txnToDelete.id;
+            setTxnToDelete(null);
+            setMsg('Bank transaction deleted.');
+            setSelectedId((cur) => (cur === deletedId ? null : cur));
+            await refresh();
+        } catch (e: any) {
+            setError(e?.message || 'Failed to delete bank transaction.');
+        } finally {
+            setIsDeletingTxn(false);
+        }
+    };
+
     /* ------------------------------------------------------------------ */
     /* Render                                                              */
     /* ------------------------------------------------------------------ */
 
     return (
+        <>
+            {/* Edit dialog */}
+            <Dialog open={Boolean(editingTxn)} onOpenChange={(open) => { if (!open) closeEditDialog(); }}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Edit bank transaction</DialogTitle>
+                        <DialogDescription>
+                            Update the raw bank row. This does not change any linked invoices.
+                        </DialogDescription>
+                    </DialogHeader>
+                    {editDraft ? (
+                        <div className="flex flex-col gap-3">
+                            <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
+                                Date
+                                <Input
+                                    type="date"
+                                    value={editDraft.txn_date}
+                                    onChange={(e) => updateEditDraft('txn_date', e.target.value)}
+                                    disabled={isSavingEdit}
+                                />
+                            </label>
+                            <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
+                                Description
+                                <Input
+                                    value={editDraft.description}
+                                    onChange={(e) => updateEditDraft('description', e.target.value)}
+                                    placeholder="Bank narration"
+                                    disabled={isSavingEdit}
+                                />
+                            </label>
+                            <div className="grid grid-cols-3 gap-2">
+                                <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
+                                    Debit (out)
+                                    <Input
+                                        inputMode="decimal"
+                                        value={editDraft.debit}
+                                        onChange={(e) => updateEditDraft('debit', e.target.value)}
+                                        placeholder="0.00"
+                                        disabled={isSavingEdit}
+                                    />
+                                </label>
+                                <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
+                                    Credit (in)
+                                    <Input
+                                        inputMode="decimal"
+                                        value={editDraft.credit}
+                                        onChange={(e) => updateEditDraft('credit', e.target.value)}
+                                        placeholder="0.00"
+                                        disabled={isSavingEdit}
+                                    />
+                                </label>
+                                <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
+                                    Balance
+                                    <Input
+                                        inputMode="decimal"
+                                        value={editDraft.balance}
+                                        onChange={(e) => updateEditDraft('balance', e.target.value)}
+                                        placeholder="0.00"
+                                        disabled={isSavingEdit}
+                                    />
+                                </label>
+                            </div>
+                        </div>
+                    ) : null}
+                    <DialogFooter className="flex gap-2">
+                        <Button type="button" variant="outline" onClick={closeEditDialog} disabled={isSavingEdit}>
+                            Cancel
+                        </Button>
+                        <Button type="button" onClick={saveEditTxn} disabled={isSavingEdit}>
+                            {isSavingEdit ? (
+                                <Icon icon="mdi:loading" className="h-4 w-4 animate-spin" />
+                            ) : (
+                                <Icon icon="mdi:content-save-outline" className="h-4 w-4" />
+                            )}
+                            Save
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Delete confirm dialog */}
+            <Dialog
+                open={Boolean(txnToDelete)}
+                onOpenChange={(open) => { if (!open && !isDeletingTxn) setTxnToDelete(null); }}
+            >
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle>Delete transaction?</DialogTitle>
+                        <DialogDescription>
+                            This removes the bank transaction and releases any invoice payments it reconciled.
+                            Confirm to continue.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter className="flex gap-2">
+                        <Button type="button" variant="outline" onClick={() => setTxnToDelete(null)} disabled={isDeletingTxn}>
+                            Cancel
+                        </Button>
+                        <Button
+                            type="button"
+                            className="bg-red-600 text-white hover:bg-red-700"
+                            onClick={confirmDeleteTxn}
+                            disabled={isDeletingTxn}
+                        >
+                            {isDeletingTxn ? 'Deleting...' : 'Confirm delete'}
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
         <div className="flex flex-col gap-6">
             {/* Top row: compose (left) + live AI-like interpretation (right) */}
             <div className="grid grid-cols-1 items-stretch gap-6 xl:grid-cols-2">
@@ -665,9 +863,10 @@ const BankStatement = () => {
                                     <THead className="h-7 pt-0 pr-2 text-right align-top text-xs font-normal text-[#1f3a67]">
                                         Amount
                                     </THead>
-                                    <THead className="h-7 pt-0 pl-2 pr-4 text-right align-top text-xs font-normal text-[#1f3a67]">
+                                    <THead className="h-7 pt-0 pl-2 pr-2 text-right align-top text-xs font-normal text-[#1f3a67]">
                                         Reconcile
                                     </THead>
+                                    <THead className="h-7 w-9 pl-0 pr-3" />
                                 </TRow>
                             </THeader>
                             <TBody>
@@ -690,9 +889,7 @@ const BankStatement = () => {
                                                 .filter(Boolean)
                                                 .join(' ')}
                                             style={{
-                                                boxShadow: `inset 4px 0 0 ${cfg.rail}${
-                                                    isSel ? ', inset 7px 0 0 #1f3a67' : ''
-                                                }`,
+                                                boxShadow: isSel ? 'inset 4px 0 0 #94a3b8' : undefined,
                                             }}
                                             onClick={() => setSelectedId(t.id)}
                                             onKeyDown={(e) => {
@@ -741,7 +938,7 @@ const BankStatement = () => {
                                                 ) : null}
                                             </TCell>
                                             {/* Zone 4 — reconcile call-to-action, by type */}
-                                            <TCell className="whitespace-nowrap py-3 pl-2 pr-4 text-right align-top text-xs">
+                                            <TCell className="whitespace-nowrap py-3 pl-2 pr-2 text-right align-top text-xs">
                                                 {cfg.reconcile === 'none' ? (
                                                     <span className="text-[#94a3b8]">no match needed</span>
                                                 ) : cfg.reconcile === 'receipt' ? (
@@ -763,19 +960,57 @@ const BankStatement = () => {
                                                     <span className="text-[#1f5a34]">● Link invoice →</span>
                                                 )}
                                             </TCell>
+                                            {/* Zone 5 — row actions (edit / delete) */}
+                                            <TCell className="w-9 py-3 pl-0 pr-3 text-right align-top">
+                                                <DropdownMenu>
+                                                    <DropdownMenuTrigger asChild>
+                                                        <button
+                                                            type="button"
+                                                            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#1f3a67] hover:bg-[#efe4c7]"
+                                                            aria-label="Bank transaction actions"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                            onKeyDown={(e) => e.stopPropagation()}
+                                                        >
+                                                            <Icon icon="mdi:dots-vertical" height={18} />
+                                                        </button>
+                                                    </DropdownMenuTrigger>
+                                                    <DropdownMenuContent align="end" className="w-36">
+                                                        <DropdownMenuItem
+                                                            className="flex items-center gap-2"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                startEditingTxn(t);
+                                                            }}
+                                                        >
+                                                            <Icon icon="solar:pen-new-square-broken" height={16} />
+                                                            <span>Edit</span>
+                                                        </DropdownMenuItem>
+                                                        <DropdownMenuItem
+                                                            className="flex items-center gap-2 text-red-600 focus:text-red-600"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setTxnToDelete(t);
+                                                            }}
+                                                        >
+                                                            <Icon icon="solar:trash-bin-minimalistic-outline" height={16} />
+                                                            <span>Delete</span>
+                                                        </DropdownMenuItem>
+                                                    </DropdownMenuContent>
+                                                </DropdownMenu>
+                                            </TCell>
                                         </TRow>
                                     );
                                 })}
                                 {loading ? (
                                     <TRow>
-                                        <TCell colSpan={4} className="px-4 py-4 text-sm text-[#596986]">
+                                        <TCell colSpan={5} className="px-4 py-4 text-sm text-[#596986]">
                                             Loading…
                                         </TCell>
                                     </TRow>
                                 ) : null}
                                 {!loading && txns.length === 0 ? (
                                     <TRow>
-                                        <TCell colSpan={4} className="px-4 py-4 text-sm text-[#596986]">
+                                        <TCell colSpan={5} className="px-4 py-4 text-sm text-[#596986]">
                                             No bank transactions yet. Paste a statement above.
                                         </TCell>
                                     </TRow>
@@ -961,6 +1196,7 @@ const BankStatement = () => {
             </Card>
             </div>
         </div>
+        </>
     );
 };
 

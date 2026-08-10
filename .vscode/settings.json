@@ -13,6 +13,14 @@
         ".eslintrc.cjs": true,
         "desktop.ini": true
     },
+{
+  "servers": {
+    "aiven": {
+      "type": "http",
+      "url": "https://mcp.aiven.live/mcp"
+    }
+  }
+},
     "workbench.tree.indent": 28,
     "git.postCommitCommand": "push",
     "editor.tabSize": 4,

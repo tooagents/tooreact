@@ -142,6 +142,23 @@ export const oBankAPI = {
         return parseApiResponse<BankTxn>(response, 'Failed to save bank transaction');
     },
 
+    // Edit reuses the create-or-update path: passing an id updates in place.
+    async updateTxn(id: string, payload: BankTxnCreate): Promise<BankTxn> {
+        return this.postTxn({ ...payload, id });
+    },
+
+    async deleteTxn(id: string): Promise<void> {
+        const response = await apiFetch(`/acc/o_bankstatement/${encodeURIComponent(id)}`, {
+            method: 'DELETE',
+        });
+        if (!response.ok) {
+            const details = await response.text().catch(() => '');
+            throw new Error(
+                `Failed to delete bank transaction: ${response.status} ${response.statusText}${details ? ` - ${details}` : ''}`,
+            );
+        }
+    },
+
     async interpretStream(text: string, onEvent?: BankStreamCallback): Promise<InterpretResult> {
         const response = await apiFetch('/acc/o_bankstatement/interpret_stream', {
             method: 'POST',
