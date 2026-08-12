@@ -43,9 +43,11 @@ type StreamItem = {
 type TxnDraft = {
     txn_date: string;
     description: string;
-    debit: string;
-    credit: string;
-    balance: string;
+    // A bank line is a single amount in one direction, not separate debit/credit.
+    direction: 'in' | 'out';
+    amount: string;
+    type: string;
+    note: string;
 };
 
 const DATE_PATTERNS: Array<(t: string) => string | null> = [
@@ -306,7 +308,7 @@ const TYPE_CONFIG: Record<string, TypeConfig> = {
         reconcile: 'none',
     },
     opening_balance: {
-        label: 'Opening',
+        label: 'Balance',
         icon: 'mdi:bank-outline',
         rail: '#5a5a5a',
         chip: 'border-[#cbd0d8] bg-[#eef0f3] text-[#4b5563]',
@@ -323,6 +325,16 @@ const TYPE_CONFIG: Record<string, TypeConfig> = {
 
 const typeConfig = (type: string | null | undefined): TypeConfig =>
     TYPE_CONFIG[String(type || 'other')] ?? TYPE_CONFIG.other;
+
+// Order shown in the Edit dialog's Type dropdown.
+const TYPE_ORDER = ['invoice', 'expense', 'transfer', 'opening_balance', 'other'] as const;
+
+// One-line explanation of what reconcile does for each type's mode.
+const RECONCILE_HINT: Record<TypeConfig['reconcile'], string> = {
+    invoice: 'Reconcile: link this deposit to invoices.',
+    receipt: 'Reconcile: attach a receipt to this expense.',
+    none: 'Reconcile: recorded — no match needed.',
+};
 
 /* ------------------------------------------------------------------ */
 /* Component                                                           */
@@ -543,12 +555,18 @@ const BankStatement = () => {
     const startEditingTxn = (txn: BankTxn) => {
         setSelectedId(txn.id);
         setEditingTxn(txn);
+        const credit = toNumber(txn.credit);
+        const debit = toNumber(txn.debit);
+        // Money out if there's a debit and no credit; otherwise treat as money in.
+        const isOut = debit > 0 && credit <= 0;
+        const amount = isOut ? debit : credit;
         setEditDraft({
             txn_date: txn.txn_date ?? '',
             description: txn.description ?? '',
-            debit: txn.debit != null ? String(txn.debit) : '',
-            credit: txn.credit != null ? String(txn.credit) : '',
-            balance: txn.balance != null ? String(txn.balance) : '',
+            direction: isOut ? 'out' : 'in',
+            amount: amount > 0 ? String(amount) : '',
+            type: txn.type ?? 'other',
+            note: txn.note ?? '',
         });
         setError(null);
         setMsg(null);
@@ -571,13 +589,15 @@ const BankStatement = () => {
         setMsg(null);
         try {
             const trimmed = (v: string) => (v.trim() ? v.trim() : null);
-            const numeric = (v: string) => (v.trim() ? Number(v) : null);
+            const amount = editDraft.amount.trim() ? Number(editDraft.amount) : null;
             await oBankAPI.updateTxn(editingTxn.id, {
                 txn_date: trimmed(editDraft.txn_date),
                 description: trimmed(editDraft.description),
-                debit: numeric(editDraft.debit),
-                credit: numeric(editDraft.credit),
-                balance: numeric(editDraft.balance),
+                // Money in -> credit, money out -> debit; the other side is cleared.
+                debit: editDraft.direction === 'out' ? amount : null,
+                credit: editDraft.direction === 'in' ? amount : null,
+                type: editDraft.type,
+                note: editDraft.note.trim(),
             });
             setEditingTxn(null);
             setEditDraft(null);
@@ -617,7 +637,7 @@ const BankStatement = () => {
         <>
             {/* Edit dialog */}
             <Dialog open={Boolean(editingTxn)} onOpenChange={(open) => { if (!open) closeEditDialog(); }}>
-                <DialogContent className="max-w-md">
+                <DialogContent className="sm:max-w-lg">
                     <DialogHeader>
                         <DialogTitle>Edit bank transaction</DialogTitle>
                         <DialogDescription>
@@ -625,18 +645,54 @@ const BankStatement = () => {
                         </DialogDescription>
                     </DialogHeader>
                     {editDraft ? (
-                        <div className="flex flex-col gap-3">
-                            <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
-                                Date
-                                <Input
-                                    type="date"
-                                    value={editDraft.txn_date}
-                                    onChange={(e) => updateEditDraft('txn_date', e.target.value)}
-                                    disabled={isSavingEdit}
-                                />
-                            </label>
-                            <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
-                                Description
+                        <div className="flex flex-col gap-4">
+                            {/* Date + Type share a row — both are short, fixed-shape fields. */}
+                            <div className="grid grid-cols-2 gap-3">
+                                <label className="flex flex-col gap-1.5">
+                                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Date</span>
+                                    <Input
+                                        type="date"
+                                        value={editDraft.txn_date}
+                                        onChange={(e) => updateEditDraft('txn_date', e.target.value)}
+                                        disabled={isSavingEdit}
+                                    />
+                                </label>
+                                <label className="flex flex-col gap-1.5">
+                                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Type</span>
+                                    <select
+                                        value={editDraft.type}
+                                        onChange={(e) => updateEditDraft('type', e.target.value)}
+                                        disabled={isSavingEdit}
+                                        className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        {TYPE_ORDER.map((t) => (
+                                            <option key={t} value={t}>
+                                                {TYPE_CONFIG[t].label}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </label>
+                            </div>
+
+                            <p className="-mt-1.5 text-xs text-[#6f7d95]">
+                                {RECONCILE_HINT[typeConfig(editDraft.type).reconcile]}
+                            </p>
+
+                            {editingTxn && editingTxn.paid_inv_ids.length > 0
+                                && typeConfig(editDraft.type).reconcile !== 'invoice' ? (
+                                <div className="flex gap-2 rounded-md border border-[#e6c98a] bg-[#fbf3df] px-3 py-2 text-xs text-[#8a6d3b]">
+                                    <Icon icon="mdi:alert-outline" className="mt-0.5 h-4 w-4 shrink-0" />
+                                    <span>
+                                        This deposit is linked to {editingTxn.paid_inv_ids.length} invoice
+                                        {editingTxn.paid_inv_ids.length === 1 ? '' : 's'}. Changing the type away from
+                                        Invoice keeps those payments but hides the reconcile link — unreconcile first if
+                                        you want to release them.
+                                    </span>
+                                </div>
+                            ) : null}
+
+                            <label className="flex flex-col gap-1.5">
+                                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Description</span>
                                 <Input
                                     value={editDraft.description}
                                     onChange={(e) => updateEditDraft('description', e.target.value)}
@@ -644,38 +700,65 @@ const BankStatement = () => {
                                     disabled={isSavingEdit}
                                 />
                             </label>
-                            <div className="grid grid-cols-3 gap-2">
-                                <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
-                                    Debit (out)
-                                    <Input
-                                        inputMode="decimal"
-                                        value={editDraft.debit}
-                                        onChange={(e) => updateEditDraft('debit', e.target.value)}
-                                        placeholder="0.00"
-                                        disabled={isSavingEdit}
-                                    />
+
+                            <div className="grid grid-cols-2 gap-3">
+                                <label className="flex flex-col gap-1.5">
+                                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Direction</span>
+                                    <div className="inline-flex h-9 w-full overflow-hidden rounded-md border border-input">
+                                        <button
+                                            type="button"
+                                            onClick={() => updateEditDraft('direction', 'in')}
+                                            disabled={isSavingEdit}
+                                            className={`flex-1 text-sm transition-colors ${editDraft.direction === 'in'
+                                                ? 'bg-[#e9f5e9] font-medium text-[#1f5a34]'
+                                                : 'text-muted-foreground hover:bg-muted'}`}
+                                        >
+                                            In
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => updateEditDraft('direction', 'out')}
+                                            disabled={isSavingEdit}
+                                            className={`flex-1 border-l border-input text-sm transition-colors ${editDraft.direction === 'out'
+                                                ? 'bg-[#f7e9e9] font-medium text-[#7a2a2a]'
+                                                : 'text-muted-foreground hover:bg-muted'}`}
+                                        >
+                                            Out
+                                        </button>
+                                    </div>
                                 </label>
-                                <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
-                                    Credit (in)
-                                    <Input
-                                        inputMode="decimal"
-                                        value={editDraft.credit}
-                                        onChange={(e) => updateEditDraft('credit', e.target.value)}
-                                        placeholder="0.00"
-                                        disabled={isSavingEdit}
-                                    />
-                                </label>
-                                <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
-                                    Balance
-                                    <Input
-                                        inputMode="decimal"
-                                        value={editDraft.balance}
-                                        onChange={(e) => updateEditDraft('balance', e.target.value)}
-                                        placeholder="0.00"
-                                        disabled={isSavingEdit}
-                                    />
+                                <label className="flex flex-col gap-1.5">
+                                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Amount</span>
+                                    <div className="relative">
+                                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">$</span>
+                                        <Input
+                                            inputMode="decimal"
+                                            value={editDraft.amount}
+                                            onChange={(e) => updateEditDraft('amount', e.target.value)}
+                                            placeholder="0.00"
+                                            disabled={isSavingEdit}
+                                            className="w-full pl-7 text-right font-mono text-base tabular-nums"
+                                        />
+                                    </div>
+                                    {editDraft.amount.trim() && !Number.isNaN(Number(editDraft.amount)) ? (
+                                        <span className={`text-right font-mono text-xs tabular-nums ${editDraft.direction === 'in' ? 'text-[#1f5a34]' : 'text-[#7a2a2a]'}`}>
+                                            {editDraft.direction === 'in' ? '+ ' : '− '}
+                                            {formatMoney(Number(editDraft.amount))}
+                                        </span>
+                                    ) : null}
                                 </label>
                             </div>
+
+                            <label className="flex flex-col gap-1.5">
+                                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Note</span>
+                                <Textarea
+                                    value={editDraft.note}
+                                    onChange={(e) => updateEditDraft('note', e.target.value)}
+                                    placeholder="Add a note for this transaction (optional)"
+                                    rows={3}
+                                    disabled={isSavingEdit}
+                                />
+                            </label>
                         </div>
                     ) : null}
                     <DialogFooter className="flex gap-2">
@@ -853,20 +936,25 @@ const BankStatement = () => {
                 </CardHeader>
                 <CardContent className="p-0">
                     <div className="overflow-x-auto">
-                        <Table>
+                        <Table className="table-fixed">
                             <THeader>
                                 <TRow className="border-b border-[#d8c6a1]">
-                                    <THead className="h-7 w-9 pl-4 pr-0" />
-                                    <THead className="h-7 pt-0 pl-1 pr-2 align-top text-xs font-normal text-[#1f3a67]">
+                                    <THead className="h-7 pt-0 pl-4 pr-1 align-middle text-xs font-normal text-[#1f3a67]">
                                         Description
                                     </THead>
-                                    <THead className="h-7 pt-0 pr-2 text-right align-top text-xs font-normal text-[#1f3a67]">
+                                    <THead className="h-7 w-[76px] pt-0 px-1 text-left align-middle text-xs font-normal text-[#1f3a67]">
+                                        Date
+                                    </THead>
+                                    <THead className="h-7 w-[96px] pt-0 px-1 text-right align-middle text-xs font-normal text-[#1f3a67]">
                                         Amount
                                     </THead>
-                                    <THead className="h-7 pt-0 pl-2 pr-2 text-right align-top text-xs font-normal text-[#1f3a67]">
+                                    <THead className="h-7 w-[60px] pt-0 px-1 text-left align-middle text-xs font-normal text-[#1f3a67]">
+                                        Type
+                                    </THead>
+                                    <THead className="h-7 w-[92px] pt-0 px-1 text-right align-middle text-xs font-normal text-[#1f3a67]">
                                         Reconcile
                                     </THead>
-                                    <THead className="h-7 w-9 pl-0 pr-3" />
+                                    <THead className="h-7 w-8 pl-0 pr-1" />
                                 </TRow>
                             </THeader>
                             <TBody>
@@ -888,9 +976,6 @@ const BankStatement = () => {
                                             ]
                                                 .filter(Boolean)
                                                 .join(' ')}
-                                            style={{
-                                                boxShadow: isSel ? 'inset 4px 0 0 #94a3b8' : undefined,
-                                            }}
                                             onClick={() => setSelectedId(t.id)}
                                             onKeyDown={(e) => {
                                                 if (e.key === 'Enter' || e.key === ' ') {
@@ -899,25 +984,18 @@ const BankStatement = () => {
                                                 }
                                             }}
                                         >
-                                            {/* Zone 1 — type icon on the rail */}
-                                            <TCell className="w-9 py-3 pl-4 pr-0 align-top">
-                                                <Icon
-                                                    icon={cfg.icon}
-                                                    className="h-4 w-4"
-                                                    style={{ color: cfg.rail }}
-                                                />
-                                            </TCell>
-                                            {/* Zone 2 — description over "date · type" */}
-                                            <TCell className="min-w-0 py-3 pl-1 pr-2 align-top">
-                                                <div className="truncate text-xs text-[#1f2f4a]">
+                                            {/* Zone 1 — description */}
+                                            <TCell className="min-w-0 py-2.5 pl-4 pr-1 align-middle">
+                                                <span className="block truncate text-xs text-[#1f2f4a]">
                                                     {t.description || '(no description)'}
-                                                </div>
-                                                <div className="mt-0.5 font-mono text-xs tabular-nums text-[#6f7d95]">
-                                                    {(t.txn_date || '—')} · {cfg.label.toLowerCase()}
-                                                </div>
+                                                </span>
                                             </TCell>
-                                            {/* Zone 3 — amount(s) with direction arrow over balance */}
-                                            <TCell className="whitespace-nowrap py-3 pr-2 text-right align-top">
+                                            {/* Zone 2 — date */}
+                                            <TCell className="w-[76px] truncate py-2.5 px-1 text-left align-middle font-mono text-[11px] tabular-nums text-[#6f7d95]">
+                                                {t.txn_date || '—'}
+                                            </TCell>
+                                            {/* Zone 3 — amount with direction arrow (balance moved to ⋮) */}
+                                            <TCell className="whitespace-nowrap py-2.5 px-1 text-right align-middle">
                                                 {credit > 0 ? (
                                                     <div className="font-mono text-xs tabular-nums text-[#1f5a34]">
                                                         ↑ {formatMoney(t.credit)}
@@ -931,37 +1009,34 @@ const BankStatement = () => {
                                                 {credit <= 0 && debit <= 0 ? (
                                                     <div className="font-mono text-xs tabular-nums text-[#94a3b8]">—</div>
                                                 ) : null}
-                                                {t.balance != null ? (
-                                                    <div className="mt-0.5 font-mono text-xs tabular-nums text-[#6f7d95]">
-                                                        bal {formatMoney(t.balance)}
-                                                    </div>
-                                                ) : null}
                                             </TCell>
-                                            {/* Zone 4 — reconcile call-to-action, by type */}
-                                            <TCell className="whitespace-nowrap py-3 pl-2 pr-2 text-right align-top text-xs">
+                                            {/* Zone 4 — type */}
+                                            <TCell className="w-[60px] truncate py-2.5 px-1 text-left align-middle text-xs text-[#6f7d95]">
+                                                {cfg.label}
+                                            </TCell>
+                                            {/* Zone 5 — reconcile call-to-action, by type */}
+                                            <TCell className="overflow-hidden truncate py-2.5 px-1 text-right align-middle text-xs">
                                                 {cfg.reconcile === 'none' ? (
-                                                    <span className="text-[#94a3b8]">no match needed</span>
+                                                    <span className="text-[#94a3b8]">Recorded</span>
                                                 ) : cfg.reconcile === 'receipt' ? (
-                                                    <span className="text-[#8a6d3b]">● Attach receipt →</span>
+                                                    <span className="text-[#8a6d3b]">Receipt →</span>
                                                 ) : t.paid_inv_ids.length > 0 ? (
-                                                    <span className="inline-flex flex-wrap items-center justify-end gap-1">
+                                                    <span className="inline-flex items-center justify-end gap-1">
                                                         <Badge className="border-[#9fca9f] bg-[#e9f5e9] text-[#1f5a34]">
                                                             {t.paid_inv_ids.length} inv
                                                         </Badge>
                                                         {unapplied > 0 ? (
-                                                            <span className="text-amber-600">
-                                                                unapplied {formatMoney(unapplied)}
-                                                            </span>
+                                                            <span className="text-amber-600">{formatMoney(unapplied)}</span>
                                                         ) : (
                                                             <span className="text-[#1f5a34]">✓</span>
                                                         )}
                                                     </span>
                                                 ) : (
-                                                    <span className="text-[#1f5a34]">● Link invoice →</span>
+                                                    <span className="text-[#1f5a34]">Link →</span>
                                                 )}
                                             </TCell>
-                                            {/* Zone 5 — row actions (edit / delete) */}
-                                            <TCell className="w-9 py-3 pl-0 pr-3 text-right align-top">
+                                            {/* Zone 6 — row actions (balance / edit / delete) */}
+                                            <TCell className="w-8 py-2.5 pl-0 pr-1 text-right align-middle">
                                                 <DropdownMenu>
                                                     <DropdownMenuTrigger asChild>
                                                         <button
@@ -974,7 +1049,12 @@ const BankStatement = () => {
                                                             <Icon icon="mdi:dots-vertical" height={18} />
                                                         </button>
                                                     </DropdownMenuTrigger>
-                                                    <DropdownMenuContent align="end" className="w-36">
+                                                    <DropdownMenuContent align="end" className="w-44">
+                                                        {t.balance != null ? (
+                                                            <div className="px-2 py-1.5 text-left font-mono text-xs tabular-nums text-[#6f7d95]">
+                                                                Balance {formatMoney(t.balance)}
+                                                            </div>
+                                                        ) : null}
                                                         <DropdownMenuItem
                                                             className="flex items-center gap-2"
                                                             onClick={(e) => {
@@ -1003,14 +1083,14 @@ const BankStatement = () => {
                                 })}
                                 {loading ? (
                                     <TRow>
-                                        <TCell colSpan={5} className="px-4 py-4 text-sm text-[#596986]">
+                                        <TCell colSpan={6} className="px-3 py-4 text-sm text-[#596986]">
                                             Loading…
                                         </TCell>
                                     </TRow>
                                 ) : null}
                                 {!loading && txns.length === 0 ? (
                                     <TRow>
-                                        <TCell colSpan={5} className="px-4 py-4 text-sm text-[#596986]">
+                                        <TCell colSpan={6} className="px-3 py-4 text-sm text-[#596986]">
                                             No bank transactions yet. Paste a statement above.
                                         </TCell>
                                     </TRow>
@@ -1062,7 +1142,7 @@ const BankStatement = () => {
                             <p>
                                 {selectedCfg.label === 'Transfer'
                                     ? 'This is a transfer between your own accounts — nothing to reconcile.'
-                                    : selectedCfg.label === 'Opening'
+                                    : selectedCfg.label === 'Balance'
                                     ? 'This is an opening balance that seeds the ledger — nothing to reconcile.'
                                     : 'Nothing to reconcile for this transaction.'}
                             </p>

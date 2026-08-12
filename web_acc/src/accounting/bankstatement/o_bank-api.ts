@@ -13,6 +13,7 @@ export type BankTxn = {
     source: string | null;
     status: string | null;
     type: BankTxnType | string | null;
+    note: string | null;
     // Derived on read by the backend:
     applied_total: number | string;   // sum of linked invoice payments
     unapplied: number | string;       // credit - applied_total (>= 0)
@@ -28,6 +29,8 @@ export type BankTxnCreate = {
     credit?: number | string | null;
     balance?: number | string | null;
     source?: string | null;
+    type?: BankTxnType | string | null;
+    note?: string | null;
 };
 
 export type ReconcileCandidate = {
