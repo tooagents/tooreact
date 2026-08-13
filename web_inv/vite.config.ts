@@ -4,8 +4,6 @@ import { resolve } from 'path';
 import fs from 'fs/promises';
 import svgr from '@svgr/rollup';
 
-import { cloudflare } from "@cloudflare/vite-plugin";
-
 // https://vitejs.dev/config/
 export default defineConfig({
     resolve: {
@@ -41,5 +39,5 @@ export default defineConfig({
     build: {
         outDir: 'dist', // ✅ this is required for Netlify
     },
-    plugins: [svgr(), react(), cloudflare()],
+    plugins: [svgr(), react()],
 });
