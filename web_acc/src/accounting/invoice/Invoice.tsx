@@ -95,9 +95,14 @@ const normalizeRate = (v: number | string | null | undefined): number => {
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
-// Underline ("____") field style: no box, just a bottom rule, to signal editable.
-const UNDERLINE =
-    'rounded-none border-0 border-b border-input bg-transparent shadow-none focus-visible:ring-0 focus-visible:border-ring';
+// Editable-field affordance: a subtle grey fill (no border) that darkens on
+// hover/focus — the compact "this is editable" cue used by Stripe/QuickBooks/Xero.
+// Preferred over an underline rule, which reads too sparse in tight rows.
+const FIELD =
+    'rounded-md border-0 bg-muted/60 shadow-none hover:bg-muted focus-visible:bg-muted focus-visible:ring-1 focus-visible:ring-ring';
+// Same fill for native <select> (needs its own focus/disabled resets).
+const SELECT_FIELD =
+    'rounded-md border-0 bg-muted/60 text-sm text-foreground hover:bg-muted focus-visible:outline-none focus-visible:bg-muted focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50';
 
 const rowAmount = (row: ItemDraft): number => num(row.item_quantity) * num(row.item_rate);
 
@@ -607,18 +612,18 @@ const Invoice = () => {
             <Dialog open={Boolean(editing) || isCreating} onOpenChange={(open) => { if (!open) closeEditDialog(); }}>
                 <DialogContent className="sm:max-w-4xl">
                     <DialogHeader>
-                        <DialogTitle>{isCreating ? 'New invoice' : 'Edit invoice'}</DialogTitle>
+                        <DialogTitle className="text-base">{isCreating ? 'New invoice' : 'Edit invoice'}</DialogTitle>
                     </DialogHeader>
                     {editDraft ? (
-                        <div className="-mr-1 flex max-h-[68vh] flex-col gap-4 overflow-y-auto pr-1">
+                        <div className="-mr-1 flex max-h-[68vh] flex-col gap-4 overflow-y-auto pr-1 text-xs [&_input]:h-8 [&_input]:text-xs [&_select]:h-8 [&_select]:text-xs [&_textarea]:text-xs">
                             {/* -------- Top: header form -------- */}
                             <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
                                 <label className="flex flex-col gap-1.5">
-                                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Invoice #</span>
+                                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Invoice #</span>
                                     <Input value={editDraft.inv_number} readOnly disabled className="opacity-70" />
                                 </label>
                                 <label className="flex flex-col gap-1.5">
-                                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Date</span>
+                                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Date</span>
                                     <Input
                                         type="date"
                                         value={editDraft.inv_date}
@@ -627,7 +632,7 @@ const Invoice = () => {
                                     />
                                 </label>
                                 <label className="flex flex-col gap-1.5">
-                                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Due date</span>
+                                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Due date</span>
                                     <Input
                                         type="date"
                                         value={editDraft.inv_due_date}
@@ -636,7 +641,7 @@ const Invoice = () => {
                                     />
                                 </label>
                                 <label className="flex flex-col gap-1.5">
-                                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Term (days)</span>
+                                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Term (days)</span>
                                     <Input
                                         type="number"
                                         inputMode="numeric"
@@ -648,7 +653,7 @@ const Invoice = () => {
                                 </label>
 
                                 <label className="col-span-2 flex flex-col gap-1.5">
-                                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Client</span>
+                                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Client</span>
                                     <select
                                         value={pickedClientId}
                                         onChange={(e) => handlePickClient(e.target.value)}
@@ -667,7 +672,7 @@ const Invoice = () => {
                                     </select>
                                 </label>
                                 <label className="col-span-2 flex flex-col gap-1.5">
-                                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Reference</span>
+                                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Reference</span>
                                     <Input
                                         value={editDraft.inv_reference}
                                         onChange={(e) => updateEditDraft('inv_reference', e.target.value)}
@@ -680,7 +685,7 @@ const Invoice = () => {
                             {/* -------- Bottom: line items (picked from catalog) -------- */}
                             <div className="flex flex-col gap-2 rounded-md border border-border p-3">
                                 <div className="flex items-center justify-between">
-                                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Line items</span>
+                                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Line items</span>
                                     <Button
                                         type="button"
                                         variant="outline"
@@ -694,7 +699,7 @@ const Invoice = () => {
                                     </Button>
                                 </div>
 
-                                <div className="grid grid-cols-[1.5fr_1.5fr_64px_96px_96px_32px] items-center gap-2 px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                                <div className="grid grid-cols-[1.5fr_1.5fr_64px_96px_96px_32px] items-center gap-2 px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                                     <span>Item</span>
                                     <span>Description</span>
                                     <span className="text-right">Qty</span>
@@ -717,7 +722,7 @@ const Invoice = () => {
                                                 value={row.catalog_id}
                                                 onChange={(e) => pickItemForRow(index, e.target.value)}
                                                 disabled={isSavingEdit}
-                                                className="h-9 w-full rounded-none border-0 border-b border-input bg-transparent px-1 text-sm text-foreground focus-visible:outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                                className={`h-9 w-full px-1 ${SELECT_FIELD}`}
                                             >
                                                 <option value="">{row.item_name || 'Select item…'}</option>
                                                 {catalogItems.map((c) => (
@@ -730,7 +735,7 @@ const Invoice = () => {
                                                 value={row.item_description}
                                                 onChange={(e) => updateItem(index, 'item_description', e.target.value)}
                                                 placeholder="Description"
-                                                className={UNDERLINE}
+                                                className={FIELD}
                                                 disabled={isSavingEdit}
                                             />
                                             <Input
@@ -738,13 +743,13 @@ const Invoice = () => {
                                                 inputMode="decimal"
                                                 value={row.item_quantity}
                                                 onChange={(e) => updateItem(index, 'item_quantity', e.target.value)}
-                                                className={`text-right ${UNDERLINE}`}
+                                                className={`text-right ${FIELD}`}
                                                 disabled={isSavingEdit}
                                             />
-                                            <div className="flex h-9 items-center justify-end px-1 text-sm tabular-nums text-muted-foreground">
+                                            <div className="flex h-9 items-center justify-end px-1 text-xs tabular-nums text-muted-foreground">
                                                 {num(row.item_rate).toFixed(2)}
                                             </div>
-                                            <div className="flex h-9 items-center justify-end px-1 text-sm tabular-nums">
+                                            <div className="flex h-9 items-center justify-end px-1 text-xs tabular-nums">
                                                 {rowAmount(row).toFixed(2)}
                                             </div>
                                             <Button
@@ -762,9 +767,21 @@ const Invoice = () => {
                                 )}
                             </div>
 
-                            {/* -------- Totals: subtotal / other charges / discount / tax / total -------- */}
-                            <div className="flex justify-end">
-                                <div className="flex w-full max-w-md flex-col gap-2 text-sm">
+                            {/* -------- Notes (left) + Totals (right), side by side -------- */}
+                            <div className="flex flex-col gap-6 md:flex-row md:items-start md:justify-between">
+                                <label className="flex flex-1 flex-col gap-1.5">
+                                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Notes</span>
+                                    <Textarea
+                                        value={editDraft.inv_notes}
+                                        onChange={(e) => updateEditDraft('inv_notes', e.target.value)}
+                                        placeholder="Add a note for this invoice (optional)"
+                                        rows={6}
+                                        disabled={isSavingEdit}
+                                    />
+                                </label>
+
+                                {/* pr-10 = trash col (32px) + gap-2 (8px), so amounts align with the item Amount column's right edge */}
+                                <div className="flex w-full flex-col gap-2 pr-10 text-xs md:max-w-md">
                                     <div className="flex items-center justify-between">
                                         <span className="text-muted-foreground">Subtotal</span>
                                         <span className="tabular-nums">{itemsSubtotal.toFixed(2)}</span>
@@ -778,7 +795,7 @@ const Invoice = () => {
                                                 setFee(f ? { label: f.fee_name ?? '', amount: num(f.fee_amount) } : null);
                                             }}
                                             disabled={isSavingEdit}
-                                            className="h-8 max-w-[220px] flex-1 rounded-none border-0 border-b border-input bg-transparent px-1 text-sm text-foreground focus-visible:outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                            className={`h-8 max-w-[220px] flex-1 px-1 ${SELECT_FIELD}`}
                                         >
                                             <option value="">Other charges…</option>
                                             {fee && !feeOptions.some((f) => f.fee_name === fee.label) ? (
@@ -802,14 +819,14 @@ const Invoice = () => {
                                                 value={discount.value}
                                                 onChange={(e) => setDiscount((d) => ({ ...d, value: e.target.value }))}
                                                 placeholder="0"
-                                                className={`h-8 w-20 text-right ${UNDERLINE}`}
+                                                className={`h-8 w-20 text-right ${FIELD}`}
                                                 disabled={isSavingEdit}
                                             />
                                             <select
                                                 value={discount.type}
                                                 onChange={(e) => setDiscount((d) => ({ ...d, type: e.target.value as 'percent' | 'flat' }))}
                                                 disabled={isSavingEdit}
-                                                className="h-8 w-16 rounded-none border-0 border-b border-input bg-transparent pl-1 pr-5 text-sm text-foreground focus-visible:outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                                className={`h-8 w-16 pl-1 pr-5 ${SELECT_FIELD}`}
                                             >
                                                 <option value="flat">{editDraft.inv_currency || '$'}</option>
                                                 <option value="percent">%</option>
@@ -826,7 +843,7 @@ const Invoice = () => {
                                                 setTax(t ? { label: t.tax_name ?? '', rate: normalizeRate(t.tax_rate) } : null);
                                             }}
                                             disabled={isSavingEdit}
-                                            className="h-8 max-w-[220px] flex-1 rounded-none border-0 border-b border-input bg-transparent px-1 text-sm text-foreground focus-visible:outline-none focus-visible:border-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                            className={`h-8 max-w-[220px] flex-1 px-1 ${SELECT_FIELD}`}
                                         >
                                             <option value="">No tax</option>
                                             {tax && !taxOptions.some((t) => t.tax_name === tax.label) ? (
@@ -841,23 +858,12 @@ const Invoice = () => {
                                         <span className="tabular-nums">{taxAmount.toFixed(2)}</span>
                                     </div>
 
-                                    <div className="flex items-center justify-between border-t border-border pt-2 text-base font-semibold">
+                                    <div className="flex items-center justify-between border-t border-border pt-2 text-sm font-semibold">
                                         <span>Total</span>
                                         <span className="tabular-nums">{invoiceTotal.toFixed(2)}</span>
                                     </div>
                                 </div>
                             </div>
-
-                            <label className="flex flex-col gap-1.5">
-                                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Notes</span>
-                                <Textarea
-                                    value={editDraft.inv_notes}
-                                    onChange={(e) => updateEditDraft('inv_notes', e.target.value)}
-                                    placeholder="Add a note for this invoice (optional)"
-                                    rows={2}
-                                    disabled={isSavingEdit}
-                                />
-                            </label>
                         </div>
                     ) : null}
                     <DialogFooter className="flex gap-2">
