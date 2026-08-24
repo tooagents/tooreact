@@ -1,26 +1,28 @@
-import { createContext, useState, useEffect } from 'react';
+import { createContext, useState, useEffect, useCallback } from 'react';
 import React from 'react';
 import { notesType } from 'src/types/notes';
-import { NotesData } from 'src/_support/notes/notes-data';
+import { notesAPI } from 'src/_support/notes/notes-api';
 
 export interface NotesContextType {
   notes: notesType[];
   loading: boolean;
   error: string | Error | null;
-  selectedNoteId: number;
-  selectNote: (id: number) => void;
-  addNote: (newNote: Partial<notesType>) => Promise<void>;
-  updateNote: (id: number, title: string, color: string) => Promise<void>;
-  deleteNote: (id: number) => Promise<void>;
+  selectedNoteId: string | null;
+  selectNote: (id: string) => void;
+  refresh: () => Promise<void>;
+  createNote: (newNote: { title?: string; color?: string }) => Promise<notesType | null>;
+  updateNote: (id: string, patch: { title?: string; color?: string }) => Promise<void>;
+  deleteNote: (id: string) => Promise<void>;
 }
 
 const initialContext: NotesContextType = {
   notes: [],
   loading: true,
   error: null,
-  selectedNoteId: 1,
+  selectedNoteId: null,
   selectNote: () => {},
-  addNote: async () => {},
+  refresh: async () => {},
+  createNote: async () => null,
   updateNote: async () => {},
   deleteNote: async () => {},
 };
@@ -31,59 +33,67 @@ export const NotesProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [notes, setNotes] = useState<notesType[]>(initialContext.notes);
   const [loading, setLoading] = useState<boolean>(initialContext.loading);
   const [error, setError] = useState<string | Error | null>(initialContext.error);
-  const [selectedNoteId, setSelectedNoteId] = useState<number>(initialContext.selectedNoteId);
+  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(initialContext.selectedNoteId);
 
-  const fetchNotes = async () => {
+  const refresh = useCallback(async () => {
     try {
       setLoading(true);
-      setNotes(NotesData);
+      const data = await notesAPI.listNotes();
+      setNotes(data);
+      setError(null);
     } catch (err: unknown) {
       setError(err instanceof Error ? err : String(err));
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchNotes();
   }, []);
 
-  const selectNote = (id: number) => {
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const selectNote = useCallback((id: string) => {
     setSelectedNoteId(id);
-  };
+  }, []);
 
-  const addNote = async (newNote: Partial<notesType>) => {
+  const createNote = useCallback(async (newNote: { title?: string; color?: string }) => {
     try {
-      const noteToAdd: notesType = {
-        id: Date.now(),
-        title: newNote.title || '',
-        color: newNote.color || 'primary',
-        datef: new Date().toISOString(),
-        deleted: false,
-      };
-      setNotes((prev) => [...prev, noteToAdd]);
+      const created = await notesAPI.saveNote({
+        title: newNote.title ?? '',
+        color: newNote.color ?? 'primary',
+      });
+      setNotes((prev) => [created, ...prev]);
+      return created;
     } catch (err) {
-      console.error('Error adding note:', err);
+      console.error('Error creating note:', err);
+      return null;
     }
-  };
+  }, []);
 
-  // Update a note
-  const updateNote = async (id: number, title: string, color: string) => {
+  const updateNote = useCallback(async (id: string, patch: { title?: string; color?: string }) => {
+    // Optimistic local update so typing feels instant.
+    setNotes((prev) => prev.map((note) => (note.id === id ? { ...note, ...patch } : note)));
     try {
-      setNotes((prev) => prev.map((note) => (note.id === id ? { ...note, title, color } : note)));
+      const saved = await notesAPI.saveNote({ id, ...patch });
+      setNotes((prev) => prev.map((note) => (note.id === id ? saved : note)));
     } catch (err) {
       console.error('Error updating note:', err);
     }
-  };
+  }, []);
 
-  // Delete a note
-  const deleteNote = async (id: number) => {
+  const deleteNote = useCallback(async (id: string) => {
+    const previous = notes;
+    setNotes((prev) => prev.filter((note) => note.id !== id));
+    if (selectedNoteId === id) {
+      setSelectedNoteId(null);
+    }
     try {
-      setNotes((prev) => prev.filter((note) => note.id !== id));
+      await notesAPI.deleteNote(id);
     } catch (err) {
       console.error('Error deleting note:', err);
+      setNotes(previous);
     }
-  };
+  }, [notes, selectedNoteId]);
 
   return (
     <NotesContext.Provider
@@ -93,7 +103,8 @@ export const NotesProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         error,
         selectedNoteId,
         selectNote,
-        addNote,
+        refresh,
+        createNote,
         updateNote,
         deleteNote,
       }}

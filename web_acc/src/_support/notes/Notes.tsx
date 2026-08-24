@@ -18,7 +18,7 @@ const Notes = () => {
   return (
     <>
 
-      <BreadcrumbComp title="Notes app" items={BCrumb} />
+      {/* <BreadcrumbComp title="Notes app" items={BCrumb} /> */}
       <NotesApp />
     </>
   );

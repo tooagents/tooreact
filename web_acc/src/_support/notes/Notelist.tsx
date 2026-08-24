@@ -2,107 +2,91 @@
 
 import { Icon } from '@iconify/react';
 import { useState, useContext, useEffect } from 'react';
-import { Alert, AlertDescription, AlertTitle } from 'src/components/ui/alert';
 import { Button } from 'src/components/ui/button';
 import { Input } from 'src/components/ui/input';
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from 'src/components/ui/tooltip';
 import { NotesContext, NotesContextType } from 'src/_support/notes/notes-context';
 import { notesType } from 'src/types/notes';
 
 const Notelist = () => {
-  const { notes, selectNote, deleteNote }: NotesContextType = useContext(NotesContext);
+  const { notes, selectNote, deleteNote, selectedNoteId, loading }: NotesContextType =
+    useContext(NotesContext);
   const [searchTerm, setSearchTerm] = useState<string>('');
-  const [activeNoteId, setActiveNoteId] = useState<number | null>(null);
 
-  useEffect(() => {
-    if (notes.length > 0) {
-      // Set the first note as active
-      const firstNoteId = notes[0].id;
-      setActiveNoteId(firstNoteId);
-    }
-  }, [notes]);
-
-  const filterNotes = (notes: notesType[], nSearch: string) => {
-    if (nSearch !== '')
-      return notes.filter(
-        (t: notesType) =>
-          !t.deleted &&
-          t.title.toLocaleLowerCase().concat(' ').includes(nSearch.toLocaleLowerCase()),
+  const filterNotes = (all: notesType[], nSearch: string) => {
+    const visible = all.filter((t: notesType) => !t.deleted);
+    if (nSearch !== '') {
+      return visible.filter((t: notesType) =>
+        t.title.toLocaleLowerCase().includes(nSearch.toLocaleLowerCase()),
       );
-
-    return notes.filter((t: notesType) => !t.deleted);
+    }
+    return visible;
   };
 
   const filteredNotes = filterNotes(notes, searchTerm);
 
-  const handleNoteClick = (noteId: number) => {
-    setActiveNoteId(noteId);
-    selectNote(noteId);
-  };
+  // Auto-select the first note when nothing is selected yet.
+  useEffect(() => {
+    if (!selectedNoteId && filteredNotes.length > 0) {
+      selectNote(filteredNotes[0].id);
+    }
+  }, [selectedNoteId, filteredNotes, selectNote]);
 
   return (
-    <div>
+    <div className="p-1">
       {/* Search input */}
       <Input
         id="search"
         value={searchTerm}
         placeholder="Search Notes"
-        required
         className="form-control"
         onChange={(e) => setSearchTerm(e.target.value)}
       />
 
-      <h6 className="text-base mt-6">All Notes</h6>
-
-      <div className="flex flex-col gap-3 mt-4">
-        {filteredNotes && filteredNotes.length ? (
+      <div className="flex flex-col mt-4">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground">
+            <Icon icon="line-md:loading-twotone-loop" height={28} />
+            <span className="text-sm">Loading notes…</span>
+          </div>
+        ) : filteredNotes && filteredNotes.length ? (
           filteredNotes.map((note) => (
-            <div key={note.id}>
-              <div
-                className={`cursor-pointer relative p-4 rounded-md bg-light${
-                  note.color
-                } dark:bg-dark${note.color}
-                ${
-                  activeNoteId === note.id ? 'scale-100' : 'scale-95'
-                } transition-transform duration-200`}
-                onClick={() => handleNoteClick(note.id)}
+            <div
+              key={note.id}
+              className={`group flex items-center gap-2 px-3 py-2 rounded-md cursor-pointer transition-colors ${
+                selectedNoteId === note.id ? 'bg-lightprimary dark:bg-darkprimary' : 'hover:bg-muted'
+              }`}
+              onClick={() => selectNote(note.id)}
+            >
+              {/* Color dot */}
+              <span className={`shrink-0 h-2.5 w-2.5 rounded-full bg-${note.color}`} />
+
+              {/* Single-line title, truncated beyond the width */}
+              <span className="flex-1 min-w-0 truncate text-sm text-ld">
+                {note.title || 'Untitled note'}
+              </span>
+
+              {/* Delete (appears on hover) */}
+              <Button
+                aria-label="delete"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100 text-ld hover:text-error"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  deleteNote(note.id);
+                }}
               >
-                <h6 className={`text-base truncate text-${note.color}`}>{note.title}</h6>
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-ld">{new Date(note.datef).toLocaleDateString()}</p>
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          aria-label="delete"
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-ld hover:text-dark dark:hover:text-white"
-                          onClick={() => deleteNote(note.id)}
-                        >
-                          <Icon icon="tabler:trash" height={18} />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Delete</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </div>
-              </div>
+                <Icon icon="tabler:trash" height={16} />
+              </Button>
             </div>
           ))
         ) : (
-          <Alert variant="destructive" className="flex items-center gap-2">
-            <Icon icon="solar:info-circle-linear" className="h-5 w-5" />
-            <AlertTitle>No Notes Found!</AlertTitle>
-            <AlertDescription>Try adjusting your search.</AlertDescription>
-          </Alert>
+          <div className="flex flex-col items-center justify-center gap-2 py-10 text-muted-foreground text-center">
+            <Icon icon="solar:notes-linear" height={28} />
+            <span className="text-sm">
+              {searchTerm ? 'No notes match your search.' : 'No notes yet — type above to create one.'}
+            </span>
+          </div>
         )}
       </div>
     </div>
