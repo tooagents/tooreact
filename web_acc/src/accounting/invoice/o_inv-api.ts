@@ -1,5 +1,53 @@
 import { apiFetch } from 'src/core/apihttp';
 
+/* ------------------------------------------------------------------ */
+/* Payment status enum + derivation                                    */
+/* ------------------------------------------------------------------ */
+
+// Canonical invoice payment statuses. All are auto-derived from
+// paid_total / balance_due / due_date EXCEPT `settled`, which is a sticky
+// manual state: the user closed an invoice that still carries a balance
+// (e.g. writing off the last $1 of a $100 invoice). Derivation must never
+// override `settled`.
+export const INV_STATUS = {
+    Unpaid: 'unpaid',
+    Partial: 'partial',
+    Paid: 'paid',
+    Overdue: 'overdue',
+    Settled: 'settled',
+} as const;
+
+export type InvStatus = (typeof INV_STATUS)[keyof typeof INV_STATUS];
+
+// Statuses a user may set by hand. Derivation leaves these untouched.
+export const INV_MANUAL_STATUSES: readonly InvStatus[] = [INV_STATUS.Settled];
+
+const isManualStatus = (status: string | null | undefined): boolean =>
+    INV_MANUAL_STATUSES.includes(String(status || '').toLowerCase() as InvStatus);
+
+// Derive the payment status from money + dates.
+// `todayStr` is the caller's LOCAL date as YYYY-MM-DD — passed in (rather than
+// read here) so this stays pure and timezone-correct at the call site.
+// Precedence: settled (sticky) > paid > overdue > partial > unpaid.
+// Note: `overdue` wins over `partial` — a partly-paid, past-due invoice reads
+// as overdue so it still surfaces as "needs chasing".
+export function deriveInvStatus(
+    inv: Pick<Invoice, 'inv_paid_total' | 'inv_balance_due' | 'inv_due_date' | 'inv_payment_status'>,
+    todayStr: string,
+): InvStatus {
+    if (isManualStatus(inv.inv_payment_status)) {
+        return String(inv.inv_payment_status).toLowerCase() as InvStatus;
+    }
+    const balance = Number(inv.inv_balance_due ?? 0);
+    const paid = Number(inv.inv_paid_total ?? 0);
+    if (balance <= 0) return INV_STATUS.Paid;
+
+    const dueStr = inv.inv_due_date ? String(inv.inv_due_date).slice(0, 10) : '';
+    if (dueStr !== '' && dueStr < todayStr) return INV_STATUS.Overdue;
+
+    return paid > 0 ? INV_STATUS.Partial : INV_STATUS.Unpaid;
+}
+
 // A single invoice line item (subset the editor reads/writes).
 export type InvoiceItem = {
     item_id?: string | null;

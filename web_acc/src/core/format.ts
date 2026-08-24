@@ -36,8 +36,13 @@ export const formatMoneyInteger = (value: unknown): string => {
 
 export const formatDate = (value?: string): string => {
     if (!value) return '';
-    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-        const [year, month, day] = value.split('-').map(Number);
+    // Treat a leading YYYY-MM-DD as a calendar date, ignoring any trailing time/zone.
+    // The DB stores date-only fields as UTC midnight (e.g. 2024-08-06T00:00:00Z); parsing
+    // that with new Date() and rendering in local time rolls the day back in negative-offset
+    // timezones. Slicing the calendar portion keeps the displayed day tz-agnostic.
+    const dateMatch = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+    if (dateMatch) {
+        const [, year, month, day] = dateMatch.map(Number);
         const local = new Date(year, month - 1, day);
         return local.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     }

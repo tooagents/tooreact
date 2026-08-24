@@ -10,7 +10,7 @@ import { Input } from 'src/components/ui/input';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
 import { Textarea } from 'src/components/ui/textarea';
 import { formatDate, formatMoney } from 'src/core/format';
-import { FeeOption, Invoice as InvoiceType, InvoiceItem, InvoiceUpdate, ItemCatalog, TaxOption, oInvAPI } from 'src/accounting/invoice/o_inv-api';
+import { FeeOption, INV_STATUS, Invoice as InvoiceType, InvoiceItem, InvoiceUpdate, ItemCatalog, TaxOption, deriveInvStatus, oInvAPI } from 'src/accounting/invoice/o_inv-api';
 import { clientsAPI } from 'src/settings/clients/clients-api';
 import { ClientDB, getClientDisplayName, getClientId } from 'src/types/type_client';
 
@@ -21,13 +21,11 @@ import { ClientDB, getClientDisplayName, getClientId } from 'src/types/type_clie
 type StatusConfig = { label: string; chip: string };
 
 const STATUS_CONFIG: Record<string, StatusConfig> = {
-    paid: { label: 'Paid', chip: 'border-[#9fca9f] bg-[#e9f5e9] text-[#1f5a34]' },
-    partial: { label: 'Partial', chip: 'border-[#e0cfa0] bg-[#faf3df] text-[#8a6d3b]' },
-    unpaid: { label: 'Unpaid', chip: 'border-[#d3dae3] bg-[#f1f4f8] text-[#64748b]' },
-    overdue: { label: 'Overdue', chip: 'border-[#e0a0a0] bg-[#fbe9e9] text-[#7a2a2a]' },
-    draft: { label: 'Draft', chip: 'border-[#cbd0d8] bg-[#eef0f3] text-[#4b5563]' },
-    sent: { label: 'Sent', chip: 'border-[#a9bfe0] bg-[#eaf0fb] text-[#3b5b8a]' },
-    void: { label: 'Void', chip: 'border-[#cbd0d8] bg-[#eef0f3] text-[#94a3b8]' },
+    [INV_STATUS.Paid]: { label: 'Paid', chip: 'border-[#9fca9f] bg-[#e9f5e9] text-[#1f5a34]' },
+    [INV_STATUS.Partial]: { label: 'Partial', chip: 'border-[#e0cfa0] bg-[#faf3df] text-[#8a6d3b]' },
+    [INV_STATUS.Unpaid]: { label: 'Unpaid', chip: 'border-[#d3dae3] bg-[#f1f4f8] text-[#64748b]' },
+    [INV_STATUS.Overdue]: { label: 'Overdue', chip: 'border-[#e0a0a0] bg-[#fbe9e9] text-[#7a2a2a]' },
+    [INV_STATUS.Settled]: { label: 'Settled', chip: 'border-[#a9bfe0] bg-[#eaf0fb] text-[#3b5b8a]' },
 };
 
 const statusConfig = (status: string | null | undefined): StatusConfig =>
@@ -35,9 +33,6 @@ const statusConfig = (status: string | null | undefined): StatusConfig =>
         label: status ? String(status) : '—',
         chip: 'border-[#d3dae3] bg-[#f1f4f8] text-[#64748b]',
     };
-
-// Order shown in the Edit dialog's Status dropdown.
-const STATUS_ORDER = ['draft', 'sent', 'unpaid', 'partial', 'paid', 'overdue', 'void'] as const;
 
 // Editable fields of the compact edit dialog. Line items and payments are
 // handled elsewhere — this dialog only touches the invoice header.
@@ -109,12 +104,21 @@ const rowAmount = (row: ItemDraft): number => num(row.item_quantity) * num(row.i
 // datetime string -> value for <input type="date"> (YYYY-MM-DD).
 const toDateInput = (value: string | null): string => (value ? String(value).slice(0, 10) : '');
 
+// Date -> local YYYY-MM-DD. Avoids toISOString(), which serializes in UTC and
+// can shift the calendar day in non-UTC-offset timezones.
+const toLocalDateStr = (d: Date): string => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
 // YYYY-MM-DD + N days -> YYYY-MM-DD ('' if the input date is unparseable).
 const addDaysToDate = (dateStr: string, days: number): string => {
     const d = new Date(`${dateStr}T00:00:00`);
     if (Number.isNaN(d.getTime())) return '';
     d.setDate(d.getDate() + days);
-    return d.toISOString().slice(0, 10);
+    return toLocalDateStr(d);
 };
 
 // Denormalize a client onto the invoice's client_* columns — the same copy the
@@ -191,7 +195,32 @@ const Invoice = () => {
         setError(null);
         try {
             const rows = await oInvAPI.listInvoices();
-            setInvoices(rows);
+            // Reconcile: inv_payment_status is the source of truth, so recompute
+            // the derived (non-`settled`) statuses against today and persist any
+            // that drifted — e.g. an unpaid invoice that has now crossed its due
+            // date becomes `overdue`. Display reads the stored status directly;
+            // this is the only place time enters the status.
+            const todayLocal = toLocalDateStr(new Date());
+            const drifted: InvoiceType[] = [];
+            const reconciled = rows.map((inv) => {
+                const derived = deriveInvStatus(inv, todayLocal);
+                if (derived === String(inv.inv_payment_status || '').toLowerCase()) return inv;
+                const next = { ...inv, inv_payment_status: derived };
+                drifted.push(next);
+                return next;
+            });
+            setInvoices(reconciled);
+            // Write the drift back so the DB stays the source of truth for other
+            // consumers (e.g. the Android app). Best-effort; UI already reflects it.
+            if (drifted.length) {
+                void Promise.all(
+                    drifted.map((inv) =>
+                        oInvAPI
+                            .saveInvoice({ inv_id: inv.inv_id, inv_payment_status: inv.inv_payment_status })
+                            .catch(() => undefined),
+                    ),
+                );
+            }
         } catch (e: any) {
             setError(e?.message || 'Failed to load invoices.');
             setInvoices([]);
@@ -252,7 +281,7 @@ const Invoice = () => {
         setPickedClientId('');
         // Defaults mirror the Android emptyInvoice(): INVOICE title, 14-day term,
         // USD, Unpaid. Issue date = today, due = today + term.
-        const today = new Date().toISOString().slice(0, 10);
+        const today = toLocalDateStr(new Date());
         setItems([emptyItemRow()]);
         setDiscount({ value: '', type: 'flat' });
         setTax(null);
@@ -346,7 +375,7 @@ const Invoice = () => {
             client_company_name: inv.client_company_name ?? '',
             client_contact_name: inv.client_contact_name ?? '',
             client_email: inv.client_email ?? '',
-            inv_payment_status: (inv.inv_payment_status ?? 'draft').toLowerCase(),
+            inv_payment_status: (inv.inv_payment_status ?? INV_STATUS.Unpaid).toLowerCase(),
             inv_payment_term: inv.inv_payment_term != null ? String(inv.inv_payment_term) : '',
             inv_currency: inv.inv_currency ?? '',
             inv_reference: inv.inv_reference ?? '',
@@ -480,7 +509,20 @@ const Invoice = () => {
                 client_company_name: trimmed(editDraft.client_company_name),
                 client_contact_name: trimmed(editDraft.client_contact_name),
                 client_email: trimmed(editDraft.client_email),
-                inv_payment_status: editDraft.inv_payment_status,
+                // Status is derived from the (recomputed) money + due date, unless
+                // the user has manually marked it `settled` — that sticks.
+                inv_payment_status:
+                    editDraft.inv_payment_status === INV_STATUS.Settled
+                        ? INV_STATUS.Settled
+                        : deriveInvStatus(
+                              {
+                                  inv_paid_total: editing?.inv_paid_total ?? 0,
+                                  inv_balance_due: invoiceTotal,
+                                  inv_due_date: editDraft.inv_due_date || null,
+                                  inv_payment_status: null,
+                              },
+                              todayStr,
+                          ),
                 inv_payment_term,
                 inv_currency: trimmed(editDraft.inv_currency),
                 inv_reference: trimmed(editDraft.inv_reference),
@@ -548,6 +590,11 @@ const Invoice = () => {
         [invoices],
     );
 
+    // Today's LOCAL date (YYYY-MM-DD), the single reference for all status
+    // derivation on this page — passed into deriveInvStatus so the list badge
+    // and the summary boxes always agree.
+    const todayStr = toLocalDateStr(new Date());
+
     const pageCount = Math.max(1, Math.ceil(activeInvoices.length / pageSize));
     const pageData = useMemo(
         () => activeInvoices.slice(pageIndex * pageSize, pageIndex * pageSize + pageSize),
@@ -560,44 +607,103 @@ const Invoice = () => {
         setPageIndex(0);
     }, [activeInvoices.length]);
 
-    const totals = useMemo(
-        () =>
-            activeInvoices.reduce(
-                (sum, inv) => ({
-                    total: sum.total + Number(inv.inv_total ?? 0),
-                    paid: sum.paid + Number(inv.inv_paid_total ?? 0),
-                    balance: sum.balance + Number(inv.inv_balance_due ?? 0),
-                }),
-                { total: 0, paid: 0, balance: 0 },
-            ),
-        [activeInvoices],
-    );
+    // Action-focused summary boxes. They read the reconciled stored status
+    // (refresh() keeps inv_payment_status current), so the boxes and list badge
+    // agree. "Due soon" is a date sub-window of the open statuses, not a status.
+    // Amounts are summed raw across currencies (single-currency assumed).
+    const summary = useMemo(() => {
+        const monthPrefix = todayStr.slice(0, 7); // YYYY-MM
+        const today = new Date(`${todayStr}T00:00:00`);
+        const soonCutoff = new Date(today);
+        soonCutoff.setDate(soonCutoff.getDate() + 7);
+        const soonStr = toLocalDateStr(soonCutoff);
+        let overdueAmount = 0;
+        let overdueCount = 0;
+        let awaiting = 0;
+        let dueSoon = 0;
+        let dueSoonCount = 0;
+        let collectedThisMonth = 0;
+        for (const inv of activeInvoices) {
+            const balance = Number(inv.inv_balance_due ?? 0);
+            const paid = Number(inv.inv_paid_total ?? 0);
+            const dueStr = inv.inv_due_date ? String(inv.inv_due_date).slice(0, 10) : '';
+            const status = String(inv.inv_payment_status || '').toLowerCase();
+
+            if (status === INV_STATUS.Overdue) {
+                overdueAmount += balance;
+                overdueCount += 1;
+            } else if (status === INV_STATUS.Unpaid || status === INV_STATUS.Partial) {
+                // Open, not yet past due.
+                awaiting += balance;
+                // Due within the next 7 days (inclusive of today).
+                if (dueStr !== '' && dueStr >= todayStr && dueStr <= soonStr) {
+                    dueSoon += balance;
+                    dueSoonCount += 1;
+                }
+            }
+            // Payments recorded this month (uses invoice date as the proxy for
+            // when it was collected — no separate payment-date field available).
+            const invStr = inv.inv_date ? String(inv.inv_date).slice(0, 10) : '';
+            if (paid > 0 && invStr.slice(0, 7) === monthPrefix) collectedThisMonth += paid;
+        }
+        return { overdueAmount, overdueCount, awaiting, dueSoon, dueSoonCount, collectedThisMonth };
+    }, [activeInvoices, todayStr]);
 
     const headBoxes = (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Card className="w-[132px] gap-1 rounded-md border-secondary/20 bg-transparent p-3 shadow-none">
+            <Card
+                className={`w-[132px] gap-1 rounded-md p-3 shadow-none ${
+                    summary.overdueAmount > 0
+                        ? 'border-[#e0a0a0] bg-[#fbe9e9]'
+                        : 'border-secondary/20 bg-transparent'
+                }`}
+            >
                 <CardHeader className="p-0 pb-1">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">Invoices</CardTitle>
+                    <CardTitle
+                        className={`text-sm font-medium ${
+                            summary.overdueAmount > 0 ? 'text-[#7a2a2a]' : 'text-muted-foreground'
+                        }`}
+                    >
+                        Overdue
+                    </CardTitle>
                 </CardHeader>
-                <CardContent className="p-0 text-2xl font-semibold">{activeInvoices.length}</CardContent>
+                <CardContent
+                    className={`p-0 text-lg font-semibold tabular-nums ${
+                        summary.overdueAmount > 0 ? 'text-[#7a2a2a]' : ''
+                    }`}
+                >
+                    {formatMoney(summary.overdueAmount)}
+                    {summary.overdueCount > 0 && (
+                        <span className="ml-1 text-xs font-normal text-muted-foreground">
+                            · {summary.overdueCount}
+                        </span>
+                    )}
+                </CardContent>
             </Card>
             <Card className="w-[132px] gap-1 rounded-md border-secondary/20 bg-transparent p-3 shadow-none">
                 <CardHeader className="p-0 pb-1">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">Total</CardTitle>
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Awaiting payment</CardTitle>
                 </CardHeader>
-                <CardContent className="p-0 text-lg font-semibold tabular-nums">{formatMoney(totals.total)}</CardContent>
+                <CardContent className="p-0 text-lg font-semibold tabular-nums">{formatMoney(summary.awaiting)}</CardContent>
             </Card>
             <Card className="w-[132px] gap-1 rounded-md border-secondary/20 bg-transparent p-3 shadow-none">
                 <CardHeader className="p-0 pb-1">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">Paid</CardTitle>
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Due soon</CardTitle>
                 </CardHeader>
-                <CardContent className="p-0 text-lg font-semibold tabular-nums">{formatMoney(totals.paid)}</CardContent>
+                <CardContent className="p-0 text-lg font-semibold tabular-nums">
+                    {formatMoney(summary.dueSoon)}
+                    {summary.dueSoonCount > 0 && (
+                        <span className="ml-1 text-xs font-normal text-muted-foreground">
+                            · {summary.dueSoonCount}
+                        </span>
+                    )}
+                </CardContent>
             </Card>
             <Card className="w-[132px] gap-1 rounded-md border-secondary/20 bg-transparent p-3 shadow-none">
                 <CardHeader className="p-0 pb-1">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">Balance due</CardTitle>
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Collected this month</CardTitle>
                 </CardHeader>
-                <CardContent className="p-0 text-lg font-semibold tabular-nums">{formatMoney(totals.balance)}</CardContent>
+                <CardContent className="p-0 text-lg font-semibold tabular-nums">{formatMoney(summary.collectedThisMonth)}</CardContent>
             </Card>
         </div>
     );
@@ -862,6 +968,39 @@ const Invoice = () => {
                                         <span>Total</span>
                                         <span className="tabular-nums">{invoiceTotal.toFixed(2)}</span>
                                     </div>
+
+                                    {/* Settled: sticky manual close for an invoice that still
+                                        carries a balance (e.g. writing off the last few dollars).
+                                        Only meaningful on an existing invoice with money owed. */}
+                                    {editing && (Number(editing.inv_balance_due ?? 0) > 0
+                                        || editDraft?.inv_payment_status === INV_STATUS.Settled) ? (
+                                        <label className="flex items-center justify-between gap-2 border-t border-border pt-2 text-xs">
+                                            <span className="flex flex-col">
+                                                <span className="font-medium">Mark as settled</span>
+                                                <span className="text-[10px] font-normal text-muted-foreground">
+                                                    Close despite the remaining balance; stops auto status updates.
+                                                </span>
+                                            </span>
+                                            <input
+                                                type="checkbox"
+                                                className="h-4 w-4 shrink-0"
+                                                disabled={isSavingEdit}
+                                                checked={editDraft?.inv_payment_status === INV_STATUS.Settled}
+                                                onChange={(e) =>
+                                                    setEditDraft((cur) =>
+                                                        cur
+                                                            ? {
+                                                                  ...cur,
+                                                                  inv_payment_status: e.target.checked
+                                                                      ? INV_STATUS.Settled
+                                                                      : INV_STATUS.Unpaid,
+                                                              }
+                                                            : cur,
+                                                    )
+                                                }
+                                            />
+                                        </label>
+                                    ) : null}
                                 </div>
                             </div>
                         </div>
