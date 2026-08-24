@@ -91,6 +91,39 @@ export type FeeOption = {
     fee_note: string | null;
 };
 
+// A payment method (settings/get_pm_list), picked when recording a payment.
+export type PaymentMethod = {
+    id: string;
+    pm_name: string | null;
+    pm_note: string | null;
+};
+
+// A recorded payment against an invoice (InvPaymentOut).
+export type InvoicePayment = {
+    id: string;
+    inv_id: string;
+    pm_id: string | null;
+    pm_name: string | null;
+    pm_note: string | null;
+    pay_date: string | null;
+    pay_amount: number | string | null;
+    pay_reference: string | null;
+    pay_note: string | null;
+    status: string | null;
+    created_at: string | null;
+};
+
+// Fields the "Add payment" form sends (InvPaymentCreate).
+export type InvoicePaymentCreate = {
+    inv_id: string;
+    pay_amount: number;
+    pay_date?: string | null;
+    pm_id?: string | null;
+    pm_name?: string | null;
+    pay_reference?: string | null;
+    pay_note?: string | null;
+};
+
 // Shape returned by /inv/get_inv_list and /inv/get_inv_one (InvOut).
 // Only the fields the list + compact editor use are typed; the rest ride along.
 export type Invoice = {
@@ -124,6 +157,7 @@ export type Invoice = {
     inv_other_charges_label: string | null;
     inv_other_charges_amount: number | string | null;
     inv_items?: InvoiceItem[];
+    inv_payments?: InvoicePayment[];
 
     status: string | null;
     is_active: number;
@@ -231,6 +265,60 @@ export const oInvAPI = {
             return (await response.json()) as FeeOption[];
         } catch {
             return [];
+        }
+    },
+
+    async listPaymentMethods(): Promise<PaymentMethod[]> {
+        try {
+            const response = await apiFetch('/inv/settings/get_pm_list');
+            if (!response.ok) return [];
+            return (await response.json()) as PaymentMethod[];
+        } catch {
+            return [];
+        }
+    },
+
+    async createPaymentMethod(pm_name: string, pm_note?: string | null): Promise<PaymentMethod> {
+        const response = await apiFetch('/inv/settings/post_pm', {
+            method: 'POST',
+            body: JSON.stringify({ pm_name, pm_note: pm_note ?? null }),
+        });
+        return parseApiResponse<PaymentMethod>(response, 'Failed to create payment method');
+    },
+
+    async deletePaymentMethod(pmId: string): Promise<void> {
+        const response = await apiFetch(
+            `/inv/settings/delete_pm?pm_id=${encodeURIComponent(pmId)}`,
+            { method: 'DELETE' },
+        );
+        if (!response.ok) {
+            const details = await response.text().catch(() => '');
+            throw new Error(
+                `Failed to delete payment method: ${response.status} ${response.statusText}${details ? ` - ${details}` : ''}`,
+            );
+        }
+    },
+
+    // Record a payment. The backend recalculates paid_total / balance_due /
+    // payment_status, so the invoice list should be refreshed after this.
+    async createPayment(payload: InvoicePaymentCreate): Promise<InvoicePayment> {
+        const response = await apiFetch('/inv/create_inv_payment', {
+            method: 'POST',
+            body: JSON.stringify(payload),
+        });
+        return parseApiResponse<InvoicePayment>(response, 'Failed to record payment');
+    },
+
+    async deletePayment(paymentId: string): Promise<void> {
+        const response = await apiFetch(
+            `/inv/delete_inv_payment?payment_id=${encodeURIComponent(paymentId)}`,
+            { method: 'DELETE' },
+        );
+        if (!response.ok) {
+            const details = await response.text().catch(() => '');
+            throw new Error(
+                `Failed to delete payment: ${response.status} ${response.statusText}${details ? ` - ${details}` : ''}`,
+            );
         }
     },
 

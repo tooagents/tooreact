@@ -5,12 +5,11 @@ import { Badge } from 'src/components/ui/badge';
 import { Button } from 'src/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from 'src/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from 'src/components/ui/dialog';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from 'src/components/ui/dropdown-menu';
 import { Input } from 'src/components/ui/input';
 import { Table, TBody, TCell, THead, THeader, TRow } from 'src/components/ui/table';
 import { Textarea } from 'src/components/ui/textarea';
 import { formatDate, formatMoney } from 'src/core/format';
-import { FeeOption, INV_STATUS, Invoice as InvoiceType, InvoiceItem, InvoiceUpdate, ItemCatalog, TaxOption, deriveInvStatus, oInvAPI } from 'src/accounting/invoice/o_inv-api';
+import { FeeOption, INV_STATUS, Invoice as InvoiceType, InvoiceItem, InvoiceUpdate, ItemCatalog, PaymentMethod, TaxOption, deriveInvStatus, oInvAPI } from 'src/accounting/invoice/o_inv-api';
 import { clientsAPI } from 'src/settings/clients/clients-api';
 import { ClientDB, getClientDisplayName, getClientId } from 'src/types/type_client';
 
@@ -113,6 +112,16 @@ const toLocalDateStr = (d: Date): string => {
     return `${year}-${month}-${day}`;
 };
 
+// Compact "Mon D" (no year) for the tight list columns. Same tz-safe slicing
+// as formatDate — the year is dropped to save horizontal space.
+const formatDateShort = (value?: string | null): string => {
+    if (!value) return '';
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+    const d = m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : new Date(value);
+    if (Number.isNaN(d.getTime())) return String(value);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+};
+
 // YYYY-MM-DD + N days -> YYYY-MM-DD ('' if the input date is unparseable).
 const addDaysToDate = (dateStr: string, days: number): string => {
     const d = new Date(`${dateStr}T00:00:00`);
@@ -167,6 +176,28 @@ const Invoice = () => {
     const [isDeleting, setIsDeleting] = useState(false);
     const [cloningId, setCloningId] = useState<string | null>(null);
     const [pageIndex, setPageIndex] = useState(0);
+
+    // Master-detail: the selected row (left list) drives the detail pane (right).
+    // The list endpoint omits line items, so the full invoice is fetched lazily
+    // for whichever row is selected.
+    const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [detail, setDetail] = useState<InvoiceType | null>(null);
+    const [detailLoading, setDetailLoading] = useState(false);
+
+    // Record-payment dialog for the selected invoice.
+    const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
+    const [payFor, setPayFor] = useState<InvoiceType | null>(null);
+    const [payDraft, setPayDraft] = useState<{
+        pay_amount: string;
+        pay_date: string;
+        pm_id: string;
+        pay_reference: string;
+        pay_note: string;
+    } | null>(null);
+    const [isSavingPayment, setIsSavingPayment] = useState(false);
+    // Inline payment-method management (no separate settings screen).
+    const [newMethodName, setNewMethodName] = useState('');
+    const [savingMethod, setSavingMethod] = useState(false);
 
     // Clients for the picker. On select we denormalize the client onto the
     // draft (visible fields) and keep the full record for the save payload.
@@ -243,14 +274,16 @@ const Invoice = () => {
             setNextNumber(await oInvAPI.getNextInvoiceNumber());
         })();
         void (async () => {
-            const [its, taxes, fees] = await Promise.all([
+            const [its, taxes, fees, methods] = await Promise.all([
                 oInvAPI.listItems(),
                 oInvAPI.listTaxes(),
                 oInvAPI.listFees(),
+                oInvAPI.listPaymentMethods(),
             ]);
             setCatalogItems(its);
             setTaxOptions(taxes);
             setFeeOptions(fees);
+            setPaymentMethods(methods);
         })();
     }, []);
 
@@ -585,6 +618,109 @@ const Invoice = () => {
         }
     };
 
+    /* ---------------- record payment ---------------- */
+
+    const startPayment = (inv: InvoiceType) => {
+        const balance = num(inv.inv_balance_due);
+        setPayFor(inv);
+        setPayDraft({
+            pay_amount: balance > 0 ? String(round2(balance)) : '',
+            pay_date: toLocalDateStr(new Date()),
+            pm_id: '',
+            pay_reference: '',
+            pay_note: '',
+        });
+        setError(null);
+        setMsg(null);
+    };
+
+    const closePaymentDialog = () => {
+        if (isSavingPayment) return;
+        setPayFor(null);
+        setPayDraft(null);
+        setNewMethodName('');
+    };
+
+    const savePayment = async () => {
+        if (!payFor || !payDraft || isSavingPayment) return;
+        const amount = num(payDraft.pay_amount);
+        if (amount <= 0) {
+            setError('Enter a payment amount greater than zero.');
+            return;
+        }
+        setIsSavingPayment(true);
+        setError(null);
+        setMsg(null);
+        try {
+            const method = paymentMethods.find((m) => m.id === payDraft.pm_id);
+            await oInvAPI.createPayment({
+                inv_id: payFor.inv_id,
+                pay_amount: round2(amount),
+                pay_date: payDraft.pay_date || null,
+                pm_id: payDraft.pm_id || null,
+                pm_name: method?.pm_name ?? null,
+                pay_reference: payDraft.pay_reference.trim() || null,
+                pay_note: payDraft.pay_note.trim() || null,
+            });
+            setPayFor(null);
+            setPayDraft(null);
+            setMsg('Payment recorded.');
+            await refresh();
+        } catch (e: any) {
+            setError(e?.message || 'Failed to record payment.');
+        } finally {
+            setIsSavingPayment(false);
+        }
+    };
+
+    const addPaymentMethod = async () => {
+        const name = newMethodName.trim();
+        if (!name || savingMethod) return;
+        setSavingMethod(true);
+        setError(null);
+        try {
+            const created = await oInvAPI.createPaymentMethod(name);
+            setNewMethodName('');
+            const methods = await oInvAPI.listPaymentMethods();
+            setPaymentMethods(methods);
+            // Auto-select the newly created method for this payment.
+            const match = methods.find((m) => m.id === created.id) ?? created;
+            setPayDraft((d) => (d ? { ...d, pm_id: match.id } : d));
+        } catch (e: any) {
+            setError(e?.message || 'Failed to add payment method.');
+        } finally {
+            setSavingMethod(false);
+        }
+    };
+
+    const removePaymentMethod = async (id: string) => {
+        if (savingMethod) return;
+        setSavingMethod(true);
+        setError(null);
+        try {
+            await oInvAPI.deletePaymentMethod(id);
+            const methods = await oInvAPI.listPaymentMethods();
+            setPaymentMethods(methods);
+            setPayDraft((d) => (d && d.pm_id === id ? { ...d, pm_id: '' } : d));
+        } catch (e: any) {
+            setError(e?.message || 'Failed to delete payment method.');
+        } finally {
+            setSavingMethod(false);
+        }
+    };
+
+    const deletePayment = async (paymentId: string) => {
+        setError(null);
+        setMsg(null);
+        try {
+            await oInvAPI.deletePayment(paymentId);
+            setMsg('Payment deleted.');
+            await refresh();
+        } catch (e: any) {
+            setError(e?.message || 'Failed to delete payment.');
+        }
+    };
+
     const activeInvoices = useMemo(
         () => invoices.filter((inv) => !inv.is_deleted),
         [invoices],
@@ -606,6 +742,45 @@ const Invoice = () => {
     useEffect(() => {
         setPageIndex(0);
     }, [activeInvoices.length]);
+
+    // Keep a valid selection: fall back to the first invoice if the current one
+    // disappears (deleted / filtered) or nothing is selected yet.
+    useEffect(() => {
+        setSelectedId((cur) =>
+            cur && activeInvoices.some((inv) => inv.inv_id === cur)
+                ? cur
+                : activeInvoices[0]?.inv_id ?? null,
+        );
+    }, [activeInvoices]);
+
+    // Fetch the full invoice (with line items) for the detail pane whenever the
+    // selection changes or the list is refreshed after a save.
+    useEffect(() => {
+        if (!selectedId) {
+            setDetail(null);
+            return;
+        }
+        let cancelled = false;
+        setDetailLoading(true);
+        void (async () => {
+            try {
+                const full = await oInvAPI.getInvoice(selectedId);
+                if (!cancelled) setDetail(full);
+            } catch {
+                if (!cancelled) setDetail(null);
+            } finally {
+                if (!cancelled) setDetailLoading(false);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedId, invoices]);
+
+    const selectedInvoice = useMemo(
+        () => activeInvoices.find((inv) => inv.inv_id === selectedId) ?? null,
+        [activeInvoices, selectedId],
+    );
 
     // Action-focused summary boxes. They read the reconciled stored status
     // (refresh() keeps inv_payment_status current), so the boxes and list badge
@@ -649,62 +824,53 @@ const Invoice = () => {
         return { overdueAmount, overdueCount, awaiting, dueSoon, dueSoonCount, collectedThisMonth };
     }, [activeInvoices, todayStr]);
 
+    // Summary boxes styled after the Tickets filter tiles, but in the Invoice
+    // page's warm palette: a big money figure over a label, one colored tile per
+    // key state (overdue / awaiting / due soon / collected this month).
     const headBoxes = (
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Card
-                className={`w-[132px] gap-1 rounded-md p-3 shadow-none ${
-                    summary.overdueAmount > 0
-                        ? 'border-[#e0a0a0] bg-[#fbe9e9]'
-                        : 'border-secondary/20 bg-transparent'
-                }`}
-            >
-                <CardHeader className="p-0 pb-1">
-                    <CardTitle
-                        className={`text-sm font-medium ${
-                            summary.overdueAmount > 0 ? 'text-[#7a2a2a]' : 'text-muted-foreground'
-                        }`}
-                    >
+        <div className="grid grid-cols-12 gap-4">
+            <div className="lg:col-span-3 md:col-span-6 col-span-12">
+                <div className="p-[24px] text-center rounded-md border border-[#e0a0a0] bg-[#fbe9e9]">
+                    <h3 className="text-[#7a2a2a] text-2xl font-semibold tabular-nums">
+                        {formatMoney(summary.overdueAmount)}
+                    </h3>
+                    <h6 className="text-base text-[#7a2a2a]">
                         Overdue
-                    </CardTitle>
-                </CardHeader>
-                <CardContent
-                    className={`p-0 text-lg font-semibold tabular-nums ${
-                        summary.overdueAmount > 0 ? 'text-[#7a2a2a]' : ''
-                    }`}
-                >
-                    {formatMoney(summary.overdueAmount)}
-                    {summary.overdueCount > 0 && (
-                        <span className="ml-1 text-xs font-normal text-muted-foreground">
-                            · {summary.overdueCount}
-                        </span>
-                    )}
-                </CardContent>
-            </Card>
-            <Card className="w-[132px] gap-1 rounded-md border-secondary/20 bg-transparent p-3 shadow-none">
-                <CardHeader className="p-0 pb-1">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">Awaiting payment</CardTitle>
-                </CardHeader>
-                <CardContent className="p-0 text-lg font-semibold tabular-nums">{formatMoney(summary.awaiting)}</CardContent>
-            </Card>
-            <Card className="w-[132px] gap-1 rounded-md border-secondary/20 bg-transparent p-3 shadow-none">
-                <CardHeader className="p-0 pb-1">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">Due soon</CardTitle>
-                </CardHeader>
-                <CardContent className="p-0 text-lg font-semibold tabular-nums">
-                    {formatMoney(summary.dueSoon)}
-                    {summary.dueSoonCount > 0 && (
-                        <span className="ml-1 text-xs font-normal text-muted-foreground">
-                            · {summary.dueSoonCount}
-                        </span>
-                    )}
-                </CardContent>
-            </Card>
-            <Card className="w-[132px] gap-1 rounded-md border-secondary/20 bg-transparent p-3 shadow-none">
-                <CardHeader className="p-0 pb-1">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">Collected this month</CardTitle>
-                </CardHeader>
-                <CardContent className="p-0 text-lg font-semibold tabular-nums">{formatMoney(summary.collectedThisMonth)}</CardContent>
-            </Card>
+                        {summary.overdueCount > 0 && (
+                            <span className="ml-1 text-sm font-normal opacity-70">· {summary.overdueCount}</span>
+                        )}
+                    </h6>
+                </div>
+            </div>
+            <div className="lg:col-span-3 md:col-span-6 col-span-12">
+                <div className="p-[24px] text-center rounded-md border border-[#d3dae3] bg-[#f1f4f8]">
+                    <h3 className="text-[#3b5b8a] text-2xl font-semibold tabular-nums">
+                        {formatMoney(summary.awaiting)}
+                    </h3>
+                    <h6 className="text-base text-[#3b5b8a]">Awaiting payment</h6>
+                </div>
+            </div>
+            <div className="lg:col-span-3 md:col-span-6 col-span-12">
+                <div className="p-[24px] text-center rounded-md border border-[#e0cfa0] bg-[#faf3df]">
+                    <h3 className="text-[#8a6d3b] text-2xl font-semibold tabular-nums">
+                        {formatMoney(summary.dueSoon)}
+                    </h3>
+                    <h6 className="text-base text-[#8a6d3b]">
+                        Due soon
+                        {summary.dueSoonCount > 0 && (
+                            <span className="ml-1 text-sm font-normal opacity-70">· {summary.dueSoonCount}</span>
+                        )}
+                    </h6>
+                </div>
+            </div>
+            <div className="lg:col-span-3 md:col-span-6 col-span-12">
+                <div className="p-[24px] text-center rounded-md border border-[#9fca9f] bg-[#e9f5e9]">
+                    <h3 className="text-[#1f5a34] text-2xl font-semibold tabular-nums">
+                        {formatMoney(summary.collectedThisMonth)}
+                    </h3>
+                    <h6 className="text-base text-[#1f5a34]">Collected this month</h6>
+                </div>
+            </div>
         </div>
     );
 
@@ -1021,6 +1187,131 @@ const Invoice = () => {
                 </DialogContent>
             </Dialog>
 
+            {/* Add-payment dialog */}
+            <Dialog open={Boolean(payFor)} onOpenChange={(open) => { if (!open) closePaymentDialog(); }}>
+                <DialogContent className="max-w-md">
+                    <DialogHeader>
+                        <DialogTitle className="text-base">Record payment</DialogTitle>
+                        <DialogDescription>
+                            {payFor
+                                ? `${payFor.inv_number || payFor.inv_id.slice(0, 8)} · balance ${formatMoney(payFor.inv_balance_due)}`
+                                : ''}
+                        </DialogDescription>
+                    </DialogHeader>
+                    {payDraft ? (
+                        <div className="flex flex-col gap-3 text-xs">
+                            <div className="grid grid-cols-2 gap-3">
+                                <label className="flex flex-col gap-1.5">
+                                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Amount</span>
+                                    <Input
+                                        type="number"
+                                        inputMode="decimal"
+                                        step="0.01"
+                                        value={payDraft.pay_amount}
+                                        onChange={(e) => setPayDraft((d) => (d ? { ...d, pay_amount: e.target.value } : d))}
+                                        disabled={isSavingPayment}
+                                        autoFocus
+                                    />
+                                </label>
+                                <label className="flex flex-col gap-1.5">
+                                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Date</span>
+                                    <Input
+                                        type="date"
+                                        value={payDraft.pay_date}
+                                        onChange={(e) => setPayDraft((d) => (d ? { ...d, pay_date: e.target.value } : d))}
+                                        disabled={isSavingPayment}
+                                    />
+                                </label>
+                            </div>
+                            <div className="flex flex-col gap-1.5">
+                                <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Method</span>
+                                <div className="flex items-center gap-2">
+                                    <select
+                                        value={payDraft.pm_id}
+                                        onChange={(e) => setPayDraft((d) => (d ? { ...d, pm_id: e.target.value } : d))}
+                                        disabled={isSavingPayment || savingMethod}
+                                        className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                                    >
+                                        <option value="">No method</option>
+                                        {paymentMethods.map((m) => (
+                                            <option key={m.id} value={m.id}>{m.pm_name || m.id}</option>
+                                        ))}
+                                    </select>
+                                    <button
+                                        type="button"
+                                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-[#94a3b8] hover:bg-red-50 hover:text-red-600 disabled:pointer-events-none disabled:opacity-40"
+                                        aria-label="Delete selected payment method"
+                                        title="Delete selected method"
+                                        disabled={!payDraft.pm_id || isSavingPayment || savingMethod}
+                                        onClick={() => void removePaymentMethod(payDraft.pm_id)}
+                                    >
+                                        <Icon icon="mdi:trash-can-outline" height={16} />
+                                    </button>
+                                </div>
+                                {/* Inline add — avoids a separate manage-methods screen */}
+                                <div className="flex items-center gap-2">
+                                    <Input
+                                        value={newMethodName}
+                                        onChange={(e) => setNewMethodName(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.preventDefault();
+                                                void addPaymentMethod();
+                                            }
+                                        }}
+                                        placeholder="Add a new method…"
+                                        className="h-8"
+                                        disabled={isSavingPayment || savingMethod}
+                                    />
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs"
+                                        onClick={() => void addPaymentMethod()}
+                                        disabled={!newMethodName.trim() || isSavingPayment || savingMethod}
+                                    >
+                                        <Icon icon="mdi:plus" className="h-3.5 w-3.5" />
+                                        Add
+                                    </Button>
+                                </div>
+                            </div>
+                            <label className="flex flex-col gap-1.5">
+                                <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Reference</span>
+                                <Input
+                                    value={payDraft.pay_reference}
+                                    onChange={(e) => setPayDraft((d) => (d ? { ...d, pay_reference: e.target.value } : d))}
+                                    placeholder="Cheque #, txn id…"
+                                    disabled={isSavingPayment}
+                                />
+                            </label>
+                            <label className="flex flex-col gap-1.5">
+                                <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Note</span>
+                                <Textarea
+                                    value={payDraft.pay_note}
+                                    onChange={(e) => setPayDraft((d) => (d ? { ...d, pay_note: e.target.value } : d))}
+                                    rows={2}
+                                    disabled={isSavingPayment}
+                                />
+                            </label>
+                        </div>
+                    ) : null}
+                    <DialogFooter className="flex gap-2">
+                        <Button type="button" variant="outline" onClick={closePaymentDialog} disabled={isSavingPayment}>
+                            Cancel
+                        </Button>
+                        <Button type="button" onClick={savePayment} disabled={isSavingPayment}>
+                            {isSavingPayment ? (
+                                <Icon icon="mdi:loading" className="h-4 w-4 animate-spin" />
+                            ) : (
+                                <Icon icon="mdi:cash-plus" className="h-4 w-4" />
+                            )}
+                            Record payment
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
             {/* Delete confirm dialog */}
             <Dialog
                 open={Boolean(toDelete)}
@@ -1050,184 +1341,437 @@ const Invoice = () => {
                 </DialogContent>
             </Dialog>
 
-            <BreadcrumbComp title="Invoice" items={BCrumb} leftContent={null} rightContent={headBoxes} />
+            {/* <BreadcrumbComp title="Invoice" items={BCrumb} leftContent={null} rightContent={headBoxes} /> */}
 
             <div className="flex flex-col gap-6">
-                <Card className="gap-4 shadow-none border-[#d8c6a1] bg-[#f8f1de]">
-                    <CardHeader className="p-4 pb-1">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="flex items-center gap-3">
-                                <CardTitle className="text-base text-[#2b2f38]">Invoices</CardTitle>
-                                {msg ? <span className="text-xs text-[#506080]">{msg}</span> : null}
+                {headBoxes}
+
+                <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+                    {/* -------- Left: invoice list (compact, two rows per item) -------- */}
+                    <Card className="gap-4 shadow-none border-[#d8c6a1] bg-[#f8f1de]">
+                        <CardHeader className="p-4 pb-1">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex items-center gap-3">
+                                    <div className="relative sm:max-w-60 w-full">
+                                        <Icon
+                                            icon="tabler:search"
+                                            height={16}
+                                            className="absolute left-3 top-1/2 -translate-y-1/2 text-[#6f7d95]"
+                                        />
+                                        <Input
+                                            type="text"
+                                            placeholder="Search"
+                                            className="h-8 pl-9 text-xs"
+                                        />
+                                    </div>
+                                    {msg ? <span className="text-xs text-[#506080]">{msg}</span> : null}
+                                </div>
+                                <Button
+                                    type="button"
+                                    onClick={startCreating}
+                                    className="h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs"
+                                >
+                                    <Icon icon="mdi:plus" className="h-4 w-4" />
+                                    New invoice
+                                </Button>
                             </div>
-                            <Button
-                                type="button"
-                                onClick={startCreating}
-                                className="h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs"
-                            >
-                                <Icon icon="mdi:plus" className="h-4 w-4" />
-                                New invoice
-                            </Button>
-                        </div>
-                        {error ? <p className="text-sm text-red-600">Error: {error}</p> : null}
-                    </CardHeader>
-                    <CardContent className="p-0">
-                        <div className="overflow-x-auto">
-                            <Table className="table-fixed">
-                                <THeader>
-                                    <TRow className="border-b border-[#d8c6a1]">
-                                        <THead className="h-7 pt-0 pl-4 pr-1 align-middle text-xs font-normal text-[#1f3a67]">
-                                            Invoice #
-                                        </THead>
-                                        <THead className="h-7 pt-0 px-1 text-left align-middle text-xs font-normal text-[#1f3a67]">
-                                            Client
-                                        </THead>
-                                        <THead className="h-7 w-[92px] pt-0 px-1 text-left align-middle text-xs font-normal text-[#1f3a67]">
-                                            Date
-                                        </THead>
-                                        <THead className="h-7 w-[92px] pt-0 px-1 text-left align-middle text-xs font-normal text-[#1f3a67]">
-                                            Due date
-                                        </THead>
-                                        <THead className="h-7 w-[100px] pt-0 px-1 text-right align-middle text-xs font-normal text-[#1f3a67]">
-                                            Total
-                                        </THead>
-                                        <THead className="h-7 w-[100px] pt-0 px-1 text-right align-middle text-xs font-normal text-[#1f3a67]">
-                                            Paid
-                                        </THead>
-                                        <THead className="h-7 w-[104px] pt-0 px-1 text-right align-middle text-xs font-normal text-[#1f3a67]">
-                                            Balance due
-                                        </THead>
-                                        <THead className="h-7 w-[84px] pt-0 px-1 text-left align-middle text-xs font-normal text-[#1f3a67]">
-                                            Status
-                                        </THead>
-                                        <THead className="h-7 w-8 pl-0 pr-1" />
-                                    </TRow>
-                                </THeader>
-                                <TBody>
-                                    {pageData.map((inv) => {
-                                        const sc = statusConfig(inv.inv_payment_status);
-                                        const isCloning = cloningId === inv.inv_id;
-                                        return (
-                                            <TRow
-                                                key={inv.inv_id}
-                                                className="border-b border-[#d8c6a1]/70 transition-colors last:border-b-0 hover:bg-[#efe4c7]"
-                                            >
-                                                <TCell className="min-w-0 py-2.5 pl-4 pr-1 align-middle text-xs font-medium text-[#172033]">
-                                                    <span className="block truncate">
-                                                        {inv.inv_number || inv.inv_id.slice(0, 8)}
-                                                    </span>
-                                                </TCell>
-                                                <TCell className="min-w-0 py-2.5 px-1 align-middle text-xs text-[#1f2f4a]">
-                                                    <span className="block truncate">
-                                                        {inv.client_company_name || inv.client_contact_name || '—'}
-                                                    </span>
-                                                </TCell>
-                                                <TCell className="w-[92px] truncate py-2.5 px-1 text-left align-middle font-mono text-[11px] tabular-nums text-[#6f7d95]">
-                                                    {formatDate(inv.inv_date ?? undefined) || '—'}
-                                                </TCell>
-                                                <TCell className="w-[92px] truncate py-2.5 px-1 text-left align-middle font-mono text-[11px] tabular-nums text-[#6f7d95]">
-                                                    {formatDate(inv.inv_due_date ?? undefined) || '—'}
-                                                </TCell>
-                                                <TCell className="w-[100px] whitespace-nowrap py-2.5 px-1 text-right align-middle font-mono text-xs tabular-nums text-[#172033]">
-                                                    {formatMoney(inv.inv_total)}
-                                                </TCell>
-                                                <TCell className="w-[100px] whitespace-nowrap py-2.5 px-1 text-right align-middle font-mono text-xs tabular-nums text-[#1f5a34]">
-                                                    {formatMoney(inv.inv_paid_total)}
-                                                </TCell>
-                                                <TCell className="w-[104px] whitespace-nowrap py-2.5 px-1 text-right align-middle font-mono text-xs tabular-nums text-[#7a2a2a]">
-                                                    {formatMoney(inv.inv_balance_due)}
-                                                </TCell>
-                                                <TCell className="w-[84px] py-2.5 px-1 text-left align-middle">
-                                                    <Badge className={`whitespace-nowrap ${sc.chip}`}>
-                                                        {sc.label}
-                                                    </Badge>
-                                                </TCell>
-                                                <TCell className="w-8 py-2.5 pl-0 pr-1 text-right align-middle">
-                                                    <DropdownMenu>
-                                                        <DropdownMenuTrigger asChild>
-                                                            <button
-                                                                type="button"
-                                                                className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#1f3a67] hover:bg-[#efe4c7]"
-                                                                aria-label="Invoice actions"
-                                                            >
-                                                                {isCloning ? (
-                                                                    <Icon icon="mdi:loading" className="h-4 w-4 animate-spin" />
-                                                                ) : (
-                                                                    <Icon icon="mdi:dots-vertical" height={18} />
-                                                                )}
-                                                            </button>
-                                                        </DropdownMenuTrigger>
-                                                        <DropdownMenuContent align="end" className="w-44">
-                                                            <DropdownMenuItem
-                                                                className="flex items-center gap-2"
-                                                                onClick={() => cloneInvoice(inv)}
-                                                            >
-                                                                <Icon icon="solar:copy-broken" height={16} />
-                                                                <span>Clone</span>
-                                                            </DropdownMenuItem>
-                                                            <DropdownMenuItem
-                                                                className="flex items-center gap-2"
-                                                                onClick={() => startEditing(inv)}
-                                                            >
-                                                                <Icon icon="solar:pen-new-square-broken" height={16} />
-                                                                <span>Edit</span>
-                                                            </DropdownMenuItem>
-                                                            <DropdownMenuItem
-                                                                className="flex items-center gap-2 text-red-600 focus:text-red-600"
-                                                                onClick={() => setToDelete(inv)}
-                                                            >
-                                                                <Icon icon="solar:trash-bin-minimalistic-outline" height={16} />
-                                                                <span>Delete</span>
-                                                            </DropdownMenuItem>
-                                                        </DropdownMenuContent>
-                                                    </DropdownMenu>
+                            {error ? <p className="text-sm text-red-600">Error: {error}</p> : null}
+                        </CardHeader>
+                        <CardContent className="p-0">
+                            <div className="overflow-x-auto border-t border-[#d8c6a1]">
+                                <Table className="w-full table-fixed">
+                                    <THeader>
+                                        <TRow className="border-b border-[#d8c6a1]">
+                                            <THead className="h-7 pt-0 pl-4 pr-1 text-left align-middle text-xs font-normal text-[#1f3a67]">
+                                                Invoice
+                                            </THead>
+                                            <THead className="h-7 w-[70px] pt-0 px-1 text-left align-middle text-xs font-normal text-[#1f3a67]">
+                                                Date
+                                            </THead>
+                                            <THead className="h-7 w-[82px] pt-0 px-1 text-left align-middle text-xs font-normal text-[#1f3a67]">
+                                                Due
+                                            </THead>
+                                            <THead className="h-7 w-[80px] pt-0 px-1 text-right align-middle text-xs font-normal text-[#1f3a67]">
+                                                Status
+                                            </THead>
+                                            <THead className="h-7 w-[84px] pt-0 px-4 text-right align-middle text-xs font-normal text-[#1f3a67]">
+                                                Amount
+                                            </THead>
+                                        </TRow>
+                                    </THeader>
+                                    <TBody>
+                                        {pageData.map((inv) => {
+                                            const sc = statusConfig(inv.inv_payment_status);
+                                            const isSelected = inv.inv_id === selectedId;
+                                            return (
+                                                <TRow
+                                                    key={inv.inv_id}
+                                                    role="button"
+                                                    tabIndex={0}
+                                                    aria-selected={isSelected}
+                                                    onClick={() => setSelectedId(inv.inv_id)}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter' || e.key === ' ') {
+                                                            e.preventDefault();
+                                                            setSelectedId(inv.inv_id);
+                                                        }
+                                                    }}
+                                                    className={[
+                                                        'cursor-pointer border-b border-[#d8c6a1]/70 transition-colors last:border-b-0 hover:bg-[#efe4c7]',
+                                                        isSelected ? 'bg-[#efe4c7] shadow-[inset_3px_0_0_#1f3a67]' : '',
+                                                    ].filter(Boolean).join(' ')}
+                                                >
+                                                    {/* Invoice # + client — flexible, client takes the space */}
+                                                    <TCell className="min-w-0 py-2.5 pl-4 pr-1 align-middle">
+                                                        <div className="flex min-w-0 items-baseline gap-2">
+                                                            <span className="shrink-0 text-xs font-medium text-[#172033]">
+                                                                {inv.inv_number || inv.inv_id.slice(0, 8)}
+                                                            </span>
+                                                            <span className="truncate text-[11px] text-[#6f7d95]">
+                                                                {inv.client_company_name || inv.client_contact_name || '—'}
+                                                            </span>
+                                                        </div>
+                                                    </TCell>
+                                                    {/* Date */}
+                                                    <TCell className="w-[74px] truncate py-2.5 px-1 text-left align-middle font-mono text-[11px] tabular-nums text-[#6f7d95]">
+                                                        {formatDateShort(inv.inv_date) || '—'}
+                                                    </TCell>
+                                                    {/* Due date — full date incl. year */}
+                                                    <TCell className="w-[96px] truncate py-2.5 px-1 text-left align-middle font-mono text-[11px] tabular-nums text-[#6f7d95]">
+                                                        {formatDate(inv.inv_due_date ?? undefined) || '—'}
+                                                    </TCell>
+                                                    {/* Status badge — fixed width, right aligned */}
+                                                    <TCell className="w-[80px] py-2.5 px-1 text-right align-middle">
+                                                        <Badge className={`whitespace-nowrap px-1.5 py-0 text-[10px] ${sc.chip}`}>
+                                                            {sc.label}
+                                                        </Badge>
+                                                    </TCell>
+                                                    {/* Amount — fixed width, right */}
+                                                    <TCell className="w-[84px] py-2.5 pl-1 pr-4 text-right align-middle whitespace-nowrap font-mono text-xs tabular-nums text-[#172033]">
+                                                        {formatMoney(inv.inv_total)}
+                                                    </TCell>
+                                                </TRow>
+                                            );
+                                        })}
+                                        {loading ? (
+                                            <TRow>
+                                                <TCell colSpan={5} className="px-3 py-4 text-sm text-[#596986]">
+                                                    Loading…
                                                 </TCell>
                                             </TRow>
-                                        );
-                                    })}
-                                    {loading ? (
-                                        <TRow>
-                                            <TCell colSpan={9} className="px-3 py-4 text-sm text-[#596986]">
-                                                Loading…
-                                            </TCell>
-                                        </TRow>
-                                    ) : null}
-                                    {!loading && activeInvoices.length === 0 ? (
-                                        <TRow>
-                                            <TCell colSpan={9} className="px-3 py-4 text-sm text-[#596986]">
-                                                No invoices yet.
-                                            </TCell>
-                                        </TRow>
-                                    ) : null}
-                                </TBody>
-                            </Table>
-                        </div>
-                        {activeInvoices.length > pageSize ? (
-                            <div className="flex flex-col items-center justify-between gap-3 border-t border-[#d8c6a1] p-4 sm:flex-row">
-                                <div className="flex w-full gap-2 sm:w-auto">
-                                    <Button
-                                        onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
-                                        disabled={!canPrev}
-                                        variant="secondary"
-                                        className="flex-1 text-xs sm:flex-none sm:text-sm"
-                                    >
-                                        Previous
-                                    </Button>
-                                    <Button
-                                        onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
-                                        disabled={!canNext}
-                                        className="flex-1 text-xs sm:flex-none sm:text-sm"
-                                    >
-                                        Next
-                                    </Button>
-                                </div>
-                                <div className="whitespace-nowrap text-xs text-[#506080] xs:text-base">
-                                    Page {pageIndex + 1} of {pageCount}
-                                </div>
+                                        ) : null}
+                                        {!loading && activeInvoices.length === 0 ? (
+                                            <TRow>
+                                                <TCell colSpan={5} className="px-3 py-4 text-sm text-[#596986]">
+                                                    No invoices yet.
+                                                </TCell>
+                                            </TRow>
+                                        ) : null}
+                                    </TBody>
+                                </Table>
                             </div>
-                        ) : null}
-                    </CardContent>
-                </Card>
+                            {activeInvoices.length > pageSize ? (
+                                <div className="flex flex-col items-center justify-between gap-3 border-t border-[#d8c6a1] p-4 sm:flex-row">
+                                    <div className="flex w-full gap-2 sm:w-auto">
+                                        <Button
+                                            onClick={() => setPageIndex((p) => Math.max(0, p - 1))}
+                                            disabled={!canPrev}
+                                            variant="secondary"
+                                            className="flex-1 text-xs sm:flex-none sm:text-sm"
+                                        >
+                                            Previous
+                                        </Button>
+                                        <Button
+                                            onClick={() => setPageIndex((p) => Math.min(pageCount - 1, p + 1))}
+                                            disabled={!canNext}
+                                            className="flex-1 text-xs sm:flex-none sm:text-sm"
+                                        >
+                                            Next
+                                        </Button>
+                                    </div>
+                                    <div className="whitespace-nowrap text-xs text-[#506080] xs:text-base">
+                                        Page {pageIndex + 1} of {pageCount}
+                                    </div>
+                                </div>
+                            ) : null}
+                        </CardContent>
+                    </Card>
+
+                    {/* -------- Right: selected invoice detail -------- */}
+                    <Card className="shadow-none border-[#cdd8e8] bg-white">
+                        <CardHeader className="p-4 pb-3">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                <div className="flex flex-col gap-1">
+                                    <CardTitle className="text-base text-[#1f2f4a]">Invoice</CardTitle>
+                                    <p className="text-xs text-[#64748b]">Review the selected invoice.</p>
+                                </div>
+                                {selectedInvoice ? (
+                                    <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            className="h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs"
+                                            onClick={() => cloneInvoice(selectedInvoice)}
+                                            disabled={cloningId === selectedInvoice.inv_id}
+                                        >
+                                            {cloningId === selectedInvoice.inv_id ? (
+                                                <Icon icon="mdi:loading" className="h-4 w-4 animate-spin" />
+                                            ) : (
+                                                <Icon icon="solar:copy-broken" className="h-4 w-4" />
+                                            )}
+                                            Clone
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            className="h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs"
+                                            onClick={() => startEditing(selectedInvoice)}
+                                        >
+                                            <Icon icon="solar:pen-new-square-broken" className="h-4 w-4" />
+                                            Edit
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="icon"
+                                            className="h-8 w-8 rounded-full border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+                                            aria-label="Delete invoice"
+                                            onClick={() => setToDelete(selectedInvoice)}
+                                        >
+                                            <Icon icon="solar:trash-bin-minimalistic-outline" className="h-4 w-4" />
+                                        </Button>
+                                    </div>
+                                ) : null}
+                            </div>
+                        </CardHeader>
+                        <CardContent className="min-h-[220px] border-t border-[#dbe4f0] p-0">
+                            {selectedInvoice ? (
+                                (() => {
+                                    // Prefer freshly fetched detail (has line items); fall back to
+                                    // the list row for header fields while it loads.
+                                    const head = detail ?? selectedInvoice;
+                                    const sc = statusConfig(head.inv_payment_status);
+                                    const lineItems = detail?.inv_items ?? [];
+                                    return (
+                                        <div className="flex flex-col">
+                                            {/* Payments — on top; doubles as the add-payment entry point.
+                                                Kept as its own bordered card, separate from the invoice strip,
+                                                but full-bleed so it matches the invoice strip's width. */}
+                                            <div className="border-b border-[#dbe4f0] py-4">
+                                                <div className="mb-2 flex items-center justify-between px-4">
+                                                    <span className="text-[10px] font-medium uppercase tracking-wide text-[#64748b]">Payments</span>
+                                                    <Button
+                                                        type="button"
+                                                        className="h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs"
+                                                        onClick={() => startPayment(head)}
+                                                    >
+                                                        <Icon icon="mdi:plus" className="h-4 w-4" />
+                                                        Add payment
+                                                    </Button>
+                                                </div>
+                                                {(detail?.inv_payments ?? []).length === 0 ? (
+                                                    <p className="px-4 text-xs text-[#64748b]">
+                                                        {detailLoading ? 'Loading payments…' : 'No payments recorded yet.'}
+                                                    </p>
+                                                ) : (
+                                                    <div className="flex flex-col gap-1.5">
+                                                        {(detail?.inv_payments ?? []).map((p) => (
+                                                            <div
+                                                                key={p.id}
+                                                                className="flex items-center justify-between gap-2 border-y border-[#e2e8f0] bg-[#f8fafc] px-4 py-2"
+                                                            >
+                                                                <div className="flex min-w-0 items-baseline gap-2 text-xs">
+                                                                    <span className="shrink-0 font-medium text-[#172033]">
+                                                                        {formatDate(p.pay_date ?? undefined) || '—'}
+                                                                    </span>
+                                                                    <span className="truncate text-[#64748b]">
+                                                                        {[p.pm_name, p.pay_reference, p.pay_note].filter(Boolean).join(' · ')}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="flex shrink-0 items-center gap-2">
+                                                                    <span className="whitespace-nowrap font-mono text-xs tabular-nums text-[#1f5a34]">
+                                                                        {formatMoney(p.pay_amount)}
+                                                                    </span>
+                                                                    <button
+                                                                        type="button"
+                                                                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#94a3b8] hover:bg-red-50 hover:text-red-600"
+                                                                        aria-label="Delete payment"
+                                                                        onClick={() => void deletePayment(p.id)}
+                                                                    >
+                                                                        <Icon icon="mdi:trash-can-outline" height={15} />
+                                                                    </button>
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            {/* Header strip */}
+                                            <div className="border-b border-[#dbe4f0] bg-[#f8fafc] p-4">
+                                                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                                    <div className="min-w-0">
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <span className="font-mono text-xs font-semibold uppercase tracking-[0.08em] text-[#1f3a67]">
+                                                                {head.inv_number || head.inv_id.slice(0, 8)}
+                                                            </span>
+                                                            <Badge className={`whitespace-nowrap ${sc.chip}`}>{sc.label}</Badge>
+                                                        </div>
+                                                        <div className="mt-2 text-sm font-semibold text-[#172033]">
+                                                            {head.client_company_name || head.client_contact_name || 'No client'}
+                                                        </div>
+                                                        {head.client_email ? (
+                                                            <div className="text-xs text-[#64748b]">{head.client_email}</div>
+                                                        ) : null}
+                                                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#64748b]">
+                                                            <span>Issued {formatDate(head.inv_date ?? undefined) || '—'}</span>
+                                                            <span>Due {formatDate(head.inv_due_date ?? undefined) || '—'}</span>
+                                                            {head.inv_reference ? <span>Ref {head.inv_reference}</span> : null}
+                                                        </div>
+                                                    </div>
+                                                    <div className="grid grid-cols-3 gap-2 lg:min-w-[300px]">
+                                                        <div className="rounded-md border border-[#dbe4f0] bg-white px-3 py-2">
+                                                            <div className="text-[11px] font-medium uppercase text-[#64748b]">Total</div>
+                                                            <div className="mt-1 font-mono text-sm font-semibold tabular-nums text-[#172033]">
+                                                                {formatMoney(head.inv_total)}
+                                                            </div>
+                                                        </div>
+                                                        <div className="rounded-md border border-[#dbe4f0] bg-white px-3 py-2">
+                                                            <div className="text-[11px] font-medium uppercase text-[#64748b]">Paid</div>
+                                                            <div className="mt-1 font-mono text-sm font-semibold tabular-nums text-[#1f5a34]">
+                                                                {formatMoney(head.inv_paid_total)}
+                                                            </div>
+                                                        </div>
+                                                        <div className="rounded-md border border-[#dbe4f0] bg-white px-3 py-2">
+                                                            <div className="text-[11px] font-medium uppercase text-[#64748b]">Balance</div>
+                                                            <div className="mt-1 font-mono text-sm font-semibold tabular-nums text-[#7a2a2a]">
+                                                                {formatMoney(head.inv_balance_due)}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Line items */}
+                                            <div className="overflow-x-auto">
+                                                <Table>
+                                                    <THeader>
+                                                        <TRow className="border-b border-[#dbe4f0] bg-white">
+                                                            <THead className="min-w-40 px-4 text-xs uppercase text-[#64748b]">Item</THead>
+                                                            <THead className="min-w-16 px-3 text-right text-xs uppercase text-[#64748b]">Qty</THead>
+                                                            <THead className="min-w-24 px-3 text-right text-xs uppercase text-[#64748b]">Rate</THead>
+                                                            <THead className="min-w-24 px-4 text-right text-xs uppercase text-[#64748b]">Amount</THead>
+                                                        </TRow>
+                                                    </THeader>
+                                                    <TBody>
+                                                        {detailLoading && lineItems.length === 0 ? (
+                                                            <TRow>
+                                                                <TCell colSpan={4} className="px-4 py-4 text-sm text-[#64748b]">
+                                                                    Loading items…
+                                                                </TCell>
+                                                            </TRow>
+                                                        ) : lineItems.length === 0 ? (
+                                                            <TRow>
+                                                                <TCell colSpan={4} className="px-4 py-4 text-sm text-[#64748b]">
+                                                                    No line items.
+                                                                </TCell>
+                                                            </TRow>
+                                                        ) : (
+                                                            lineItems.map((it, index) => {
+                                                                const amount = it.item_amount != null
+                                                                    ? num(it.item_amount)
+                                                                    : num(it.item_quantity) * num(it.item_rate);
+                                                                return (
+                                                                    <TRow
+                                                                        key={index}
+                                                                        className="border-b border-[#e2e8f0] last:border-b-0 hover:bg-[#f8fafc]"
+                                                                    >
+                                                                        <TCell className="px-4 py-3 align-top">
+                                                                            <div className="text-sm font-medium text-[#172033]">
+                                                                                {it.item_name || '—'}
+                                                                            </div>
+                                                                            {it.item_description ? (
+                                                                                <div className="text-xs text-[#64748b]">{it.item_description}</div>
+                                                                            ) : null}
+                                                                        </TCell>
+                                                                        <TCell className="px-3 py-3 text-right align-top font-mono text-sm tabular-nums text-[#172033]">
+                                                                            {num(it.item_quantity)}
+                                                                        </TCell>
+                                                                        <TCell className="px-3 py-3 text-right align-top font-mono text-sm tabular-nums text-[#172033]">
+                                                                            {formatMoney(it.item_rate)}
+                                                                        </TCell>
+                                                                        <TCell className="px-4 py-3 text-right align-top font-mono text-sm tabular-nums text-[#172033]">
+                                                                            {formatMoney(amount)}
+                                                                        </TCell>
+                                                                    </TRow>
+                                                                );
+                                                            })
+                                                        )}
+                                                    </TBody>
+                                                </Table>
+                                            </div>
+
+                                            {/* Totals + notes */}
+                                            <div className="flex flex-col gap-6 border-t border-[#dbe4f0] p-4 md:flex-row md:items-start md:justify-between">
+                                                <div className="flex-1">
+                                                    {head.inv_notes ? (
+                                                        <>
+                                                            <div className="text-[10px] font-medium uppercase tracking-wide text-[#64748b]">Notes</div>
+                                                            <p className="mt-1 whitespace-pre-wrap text-xs text-[#334155]">{head.inv_notes}</p>
+                                                        </>
+                                                    ) : null}
+                                                </div>
+                                                <div className="flex w-full flex-col gap-1.5 text-xs md:max-w-xs">
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-[#64748b]">Subtotal</span>
+                                                        <span className="font-mono tabular-nums text-[#172033]">{formatMoney(head.inv_subtotal)}</span>
+                                                    </div>
+                                                    {num(head.inv_discount) > 0 ? (
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-[#64748b]">Discount</span>
+                                                            <span className="font-mono tabular-nums text-[#172033]">-{formatMoney(head.inv_discount)}</span>
+                                                        </div>
+                                                    ) : null}
+                                                    {head.inv_other_charges_label || num(head.inv_other_charges_amount) > 0 ? (
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-[#64748b]">{head.inv_other_charges_label || 'Other charges'}</span>
+                                                            <span className="font-mono tabular-nums text-[#172033]">{formatMoney(head.inv_other_charges_amount)}</span>
+                                                        </div>
+                                                    ) : null}
+                                                    {head.inv_tax_label || num(head.inv_tax_amount) > 0 ? (
+                                                        <div className="flex items-center justify-between">
+                                                            <span className="text-[#64748b]">
+                                                                {head.inv_tax_label || 'Tax'}
+                                                                {num(head.inv_tax_rate) ? ` (${num(head.inv_tax_rate)}%)` : ''}
+                                                            </span>
+                                                            <span className="font-mono tabular-nums text-[#172033]">{formatMoney(head.inv_tax_amount)}</span>
+                                                        </div>
+                                                    ) : null}
+                                                    <div className="flex items-center justify-between border-t border-[#dbe4f0] pt-2 text-sm font-semibold">
+                                                        <span>Total</span>
+                                                        <span className="font-mono tabular-nums">{formatMoney(head.inv_total)}</span>
+                                                    </div>
+                                                    <div className="flex items-center justify-between">
+                                                        <span className="text-[#64748b]">Paid</span>
+                                                        <span className="font-mono tabular-nums text-[#1f5a34]">{formatMoney(head.inv_paid_total)}</span>
+                                                    </div>
+                                                    <div className="flex items-center justify-between text-sm font-semibold">
+                                                        <span>Balance due</span>
+                                                        <span className="font-mono tabular-nums text-[#7a2a2a]">{formatMoney(head.inv_balance_due)}</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })()
+                            ) : (
+                                <div className="flex min-h-[180px] items-center justify-center text-sm font-medium text-muted-foreground">
+                                    Select an invoice.
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                </div>
             </div>
         </>
     );
