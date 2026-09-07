@@ -378,6 +378,9 @@ const BankStatement = () => {
     // AI reconcile suggestion (advisory): inv_id -> {confidence, reason}.
     const [aiSuggest, setAiSuggest] = useState<Record<string, { confidence: number; reason: string }>>({});
     const [aiSuggestLoading, setAiSuggestLoading] = useState(false);
+    // The model that actually produced the suggestion (rotates per call); shown in
+    // place of a generic "AI" label once the suggestion returns.
+    const [aiSuggestModel, setAiSuggestModel] = useState<string | null>(null);
 
     // Row actions (3-dot menu): edit dialog + delete confirm
     const [editingTxn, setEditingTxn] = useState<BankTxn | null>(null);
@@ -438,12 +441,14 @@ const BankStatement = () => {
             setReconcile(null);
             setChecked({});
             setAiSuggest({});
+            setAiSuggestModel(null);
             return;
         }
         let cancelled = false;
         const txnId = selectedTxn.id;
         setReconcileLoading(true);
         setAiSuggest({});
+        setAiSuggestModel(null);
         oBankAPI
             .getReconcileView(txnId)
             .then((view) => {
@@ -470,6 +475,7 @@ const BankStatement = () => {
                             map[s.inv_id] = { confidence: s.confidence, reason: s.reason || '' };
                         });
                         setAiSuggest(map);
+                        setAiSuggestModel(res.model);
                         setChecked((prev) => {
                             const next = { ...prev };
                             res.suggestions.forEach((s) => {
@@ -616,6 +622,7 @@ const BankStatement = () => {
             setReconcile(view);
             setChecked({});
             setAiSuggest({});
+            setAiSuggestModel(null);
             setMsg('De-reconciled — invoice links removed.');
             await refresh(selectedTxn.id);
         } catch (e: any) {
@@ -1406,12 +1413,12 @@ const BankStatement = () => {
                             {aiSuggestLoading ? (
                                 <div className="flex items-center gap-1.5 text-xs text-[#4338ca]">
                                     <Icon icon="mdi:loading" className="h-3.5 w-3.5 animate-spin" />
-                                    AI is suggesting matches…
+                                    {aiSuggestModel || 'AI'} is suggesting matches…
                                 </div>
                             ) : Object.keys(aiSuggest).length > 0 ? (
                                 <div className="flex items-center gap-1.5 text-xs text-[#4338ca]">
                                     <Icon icon="mdi:sparkles" className="h-3.5 w-3.5" />
-                                    AI pre-ticked its confident matches — review before saving.
+                                    {aiSuggestModel || 'AI'} pre-ticked its confident matches — review before saving.
                                 </div>
                             ) : null}
 
