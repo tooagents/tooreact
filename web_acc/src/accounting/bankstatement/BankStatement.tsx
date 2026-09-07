@@ -17,6 +17,9 @@ import {
     ReconcileView,
 } from 'src/accounting/bankstatement/o_bank-api';
 
+// AI reconcile matches at/above this confidence are pre-ticked for the user.
+const AI_SUGGEST_TICK_THRESHOLD = 0.7;
+
 /* ------------------------------------------------------------------ */
 /* Paste parsing (deterministic, client-side)                          */
 /* ------------------------------------------------------------------ */
@@ -47,6 +50,8 @@ type TxnDraft = {
     direction: 'in' | 'out';
     amount: string;
     type: string;
+    // Short formal bank abbreviation shown after the description (e.g. "TD").
+    bank_name: string;
     note: string;
 };
 
@@ -329,6 +334,15 @@ const typeConfig = (type: string | null | undefined): TypeConfig =>
 // Order shown in the Edit dialog's Type dropdown.
 const TYPE_ORDER = ['invoice', 'expense', 'transfer', 'opening_balance', 'other'] as const;
 
+// Canonical cash direction per type. Switching Type in the edit dialog flips
+// Direction to match — invoice = money in, expense = money out — so an invoice can
+// never be left as a debit (which would make it unreconcilable). Ambiguous types
+// (transfer / opening_balance / other) leave the current direction untouched.
+const DIRECTION_BY_TYPE: Record<string, 'in' | 'out'> = {
+    invoice: 'in',
+    expense: 'out',
+};
+
 // One-line explanation of what reconcile does for each type's mode.
 const RECONCILE_HINT: Record<TypeConfig['reconcile'], string> = {
     invoice: 'Reconcile: link this deposit to invoices.',
@@ -361,6 +375,9 @@ const BankStatement = () => {
     const [reconcileLoading, setReconcileLoading] = useState(false);
     const [checked, setChecked] = useState<Record<string, boolean>>({});
     const [isSaving, setIsSaving] = useState(false);
+    // AI reconcile suggestion (advisory): inv_id -> {confidence, reason}.
+    const [aiSuggest, setAiSuggest] = useState<Record<string, { confidence: number; reason: string }>>({});
+    const [aiSuggestLoading, setAiSuggestLoading] = useState(false);
 
     // Row actions (3-dot menu): edit dialog + delete confirm
     const [editingTxn, setEditingTxn] = useState<BankTxn | null>(null);
@@ -420,12 +437,15 @@ const BankStatement = () => {
         if (reconcileMode !== 'invoice') {
             setReconcile(null);
             setChecked({});
+            setAiSuggest({});
             return;
         }
         let cancelled = false;
+        const txnId = selectedTxn.id;
         setReconcileLoading(true);
+        setAiSuggest({});
         oBankAPI
-            .getReconcileView(selectedTxn.id)
+            .getReconcileView(txnId)
             .then((view) => {
                 if (cancelled) return;
                 setReconcile(view);
@@ -434,6 +454,34 @@ const BankStatement = () => {
                     preset[id] = true;
                 });
                 setChecked(preset);
+                // An already-reconciled deposit is settled — don't re-run the AI
+                // (wasted cost/latency) or disturb its existing ticks.
+                if (view.bank_txn.paid_inv_ids.length > 0) return;
+                // Candidates are shown immediately; the AI suggestion runs in the
+                // background and pre-ticks confident matches when it returns. It is
+                // advisory — a failure or empty result simply leaves the manual list.
+                setAiSuggestLoading(true);
+                oBankAPI
+                    .suggestReconcile(txnId)
+                    .then((res) => {
+                        if (cancelled) return;
+                        const map: Record<string, { confidence: number; reason: string }> = {};
+                        res.suggestions.forEach((s) => {
+                            map[s.inv_id] = { confidence: s.confidence, reason: s.reason || '' };
+                        });
+                        setAiSuggest(map);
+                        setChecked((prev) => {
+                            const next = { ...prev };
+                            res.suggestions.forEach((s) => {
+                                if (s.confidence >= AI_SUGGEST_TICK_THRESHOLD) next[s.inv_id] = true;
+                            });
+                            return next;
+                        });
+                    })
+                    .catch(() => { /* advisory: ignore AI failures */ })
+                    .finally(() => {
+                        if (!cancelled) setAiSuggestLoading(false);
+                    });
             })
             .catch((e) => {
                 if (!cancelled) setError(e?.message || 'Failed to load reconcile view.');
@@ -515,6 +563,13 @@ const BankStatement = () => {
         [allocation],
     );
 
+    // Reconcile is a binary, deposit-level flag stored on the bank transaction
+    // (is_reconciled) — True only when fully applied; partial stays False. When set,
+    // show the settled detail view; otherwise the working candidate view.
+    const reconciledInvIds = reconcile?.bank_txn.paid_inv_ids ?? [];
+    const isReconciled = !!reconcile?.bank_txn.is_reconciled;
+    const linkedInvoices = candidates.filter((c) => reconciledInvIds.includes(c.inv_id));
+
     const saveReconcile = async () => {
         if (!selectedTxn || isSaving) return;
         setIsSaving(true);
@@ -550,6 +605,26 @@ const BankStatement = () => {
         }
     };
 
+    const deReconcile = async () => {
+        if (!selectedTxn || isSaving) return;
+        setIsSaving(true);
+        setError(null);
+        setMsg(null);
+        try {
+            // Reconcile with no allocations clears this deposit's invoice links.
+            const view = await oBankAPI.reconcile(selectedTxn.id, []);
+            setReconcile(view);
+            setChecked({});
+            setAiSuggest({});
+            setMsg('De-reconciled — invoice links removed.');
+            await refresh(selectedTxn.id);
+        } catch (e: any) {
+            setError(e?.message || 'Failed to de-reconcile.');
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
     /* ---------------- row actions: edit + delete ---------------- */
 
     const startEditingTxn = (txn: BankTxn) => {
@@ -566,6 +641,7 @@ const BankStatement = () => {
             direction: isOut ? 'out' : 'in',
             amount: amount > 0 ? String(amount) : '',
             type: txn.type ?? 'other',
+            bank_name: txn.bank_name ?? '',
             note: txn.note ?? '',
         });
         setError(null);
@@ -597,6 +673,7 @@ const BankStatement = () => {
                 debit: editDraft.direction === 'out' ? amount : null,
                 credit: editDraft.direction === 'in' ? amount : null,
                 type: editDraft.type,
+                bank_name: trimmed(editDraft.bank_name),
                 note: editDraft.note.trim(),
             });
             setEditingTxn(null);
@@ -661,7 +738,15 @@ const BankStatement = () => {
                                     <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Type</span>
                                     <select
                                         value={editDraft.type}
-                                        onChange={(e) => updateEditDraft('type', e.target.value)}
+                                        onChange={(e) => {
+                                            const nextType = e.target.value;
+                                            const dir = DIRECTION_BY_TYPE[nextType];
+                                            // Flip Direction to match the type (invoice=in, expense=out);
+                                            // leave it alone for ambiguous types.
+                                            setEditDraft((cur) =>
+                                                cur ? { ...cur, type: nextType, ...(dir ? { direction: dir } : {}) } : cur,
+                                            );
+                                        }}
                                         disabled={isSavingEdit}
                                         className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                                     >
@@ -691,15 +776,28 @@ const BankStatement = () => {
                                 </div>
                             ) : null}
 
-                            <label className="flex flex-col gap-1.5">
-                                <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Description</span>
-                                <Input
-                                    value={editDraft.description}
-                                    onChange={(e) => updateEditDraft('description', e.target.value)}
-                                    placeholder="Bank narration"
-                                    disabled={isSavingEdit}
-                                />
-                            </label>
+                            <div className="grid grid-cols-4 gap-3">
+                                <label className="col-span-3 flex flex-col gap-1.5">
+                                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Description</span>
+                                    <Input
+                                        value={editDraft.description}
+                                        onChange={(e) => updateEditDraft('description', e.target.value)}
+                                        placeholder="Bank narration"
+                                        disabled={isSavingEdit}
+                                    />
+                                </label>
+                                <label className="col-span-1 flex flex-col gap-1.5">
+                                    <span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Bank</span>
+                                    <Input
+                                        value={editDraft.bank_name}
+                                        onChange={(e) => updateEditDraft('bank_name', e.target.value)}
+                                        placeholder="TD"
+                                        maxLength={6}
+                                        disabled={isSavingEdit}
+                                        className="uppercase"
+                                    />
+                                </label>
+                            </div>
 
                             <div className="grid grid-cols-2 gap-3">
                                 <label className="flex flex-col gap-1.5">
@@ -984,10 +1082,17 @@ const BankStatement = () => {
                                                 }
                                             }}
                                         >
-                                            {/* Zone 1 — description */}
+                                            {/* Zone 1 — description, with bank abbreviation kept visible after it */}
                                             <TCell className="min-w-0 py-2.5 pl-4 pr-1 align-middle">
-                                                <span className="block truncate text-xs text-[#1f2f4a]">
-                                                    {t.description || '(no description)'}
+                                                <span className="flex min-w-0 items-baseline text-xs text-[#1f2f4a]">
+                                                    <span className="truncate">
+                                                        {t.description || '(no description)'}
+                                                    </span>
+                                                    {t.bank_name ? (
+                                                        <span className="ml-0.5 shrink-0 text-[#6f7d95]">
+                                                            /{t.bank_name}
+                                                        </span>
+                                                    ) : null}
                                                 </span>
                                             </TCell>
                                             {/* Zone 2 — date */}
@@ -1020,16 +1125,20 @@ const BankStatement = () => {
                                                     <span className="text-[#94a3b8]">Recorded</span>
                                                 ) : cfg.reconcile === 'receipt' ? (
                                                     <span className="text-[#8a6d3b]">Receipt →</span>
+                                                ) : t.is_reconciled ? (
+                                                    <Badge
+                                                        title="Reconciled"
+                                                        className="inline-flex items-center gap-0.5 border-[#9fca9f] bg-[#e9f5e9] text-[#1f5a34]"
+                                                    >
+                                                        <Icon icon="mdi:check-decagram" className="h-3.5 w-3.5" />
+                                                        Rec.
+                                                    </Badge>
                                                 ) : t.paid_inv_ids.length > 0 ? (
                                                     <span className="inline-flex items-center justify-end gap-1">
-                                                        <Badge className="border-[#9fca9f] bg-[#e9f5e9] text-[#1f5a34]">
+                                                        <Badge className="border-[#e6c98a] bg-[#fbf3df] text-[#8a6d3b]">
                                                             {t.paid_inv_ids.length} inv
                                                         </Badge>
-                                                        {unapplied > 0 ? (
-                                                            <span className="text-amber-600">{formatMoney(unapplied)}</span>
-                                                        ) : (
-                                                            <span className="text-[#1f5a34]">✓</span>
-                                                        )}
+                                                        <span className="text-amber-600">{formatMoney(unapplied)} left</span>
                                                     </span>
                                                 ) : (
                                                     <span className="text-[#1f5a34]">Link →</span>
@@ -1170,6 +1279,111 @@ const BankStatement = () => {
                         <div className="flex min-h-[120px] items-center justify-center text-sm text-muted-foreground">
                             <Icon icon="mdi:loading" className="mr-2 h-4 w-4 animate-spin" /> Loading candidates…
                         </div>
+                    ) : isReconciled ? (
+                        <div className="flex flex-col gap-4">
+                            {/* Top: bank transaction detail (incl. note) */}
+                            <div className="rounded-md border border-[#d8c6a1] bg-[#fdf8ec] px-3 py-2.5">
+                                <div className="mb-2 flex items-center justify-between">
+                                    <span className="text-xs font-semibold uppercase tracking-wide text-[#1f3a67]">
+                                        Bank transaction
+                                    </span>
+                                    <span className="inline-flex items-center gap-1 rounded-full bg-[#e9f5e9] px-2 py-0.5 text-[11px] font-medium text-[#1f5a34]">
+                                        <Icon icon="mdi:link-variant" className="h-3 w-3" /> Reconciled
+                                    </span>
+                                </div>
+                                <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
+                                    <div className="flex justify-between gap-2">
+                                        <span className="text-[#6f7d95]">Date</span>
+                                        <span className="text-[#172033]">{selectedTxn.txn_date || '—'}</span>
+                                    </div>
+                                    <div className="flex justify-between gap-2">
+                                        <span className="text-[#6f7d95]">Amount</span>
+                                        <span className="font-mono text-[#1f5a34]">↑ {formatMoney(selectedTxn.credit)}</span>
+                                    </div>
+                                    <div className="flex justify-between gap-2">
+                                        <span className="text-[#6f7d95]">Bank</span>
+                                        <span className="text-[#172033]">{selectedTxn.bank_name || '—'}</span>
+                                    </div>
+                                    <div className="flex justify-between gap-2">
+                                        <span className="text-[#6f7d95]">Source</span>
+                                        <span className="text-[#172033]">{selectedTxn.source || '—'}</span>
+                                    </div>
+                                    <div className="col-span-2 flex justify-between gap-2">
+                                        <span className="text-[#6f7d95]">Description</span>
+                                        <span className="text-right text-[#172033]">{selectedTxn.description || '—'}</span>
+                                    </div>
+                                    {selectedTxn.note ? (
+                                        <div className="col-span-2 flex justify-between gap-2">
+                                            <span className="text-[#6f7d95]">Note</span>
+                                            <span className="text-right text-[#172033]">{selectedTxn.note}</span>
+                                        </div>
+                                    ) : null}
+                                </div>
+                            </div>
+
+                            {/* Bottom: linked invoice(s) */}
+                            <div className="overflow-x-auto rounded-md border border-[#9eb8dc]/70 bg-[#fdf8ec]/70">
+                                <Table>
+                                    <THeader>
+                                        <TRow className="border-b border-[#6fa0d8]/60">
+                                            <THead className="px-2 text-xs uppercase text-[#1f3a67]">Invoice</THead>
+                                            <THead className="px-2 text-xs uppercase text-[#1f3a67]">Client</THead>
+                                            <THead className="px-2 text-xs uppercase text-[#1f3a67]">Date</THead>
+                                            <THead className="px-2 text-right text-xs uppercase text-[#1f3a67]">Total</THead>
+                                            <THead className="px-2 text-right text-xs uppercase text-[#1f3a67]">Balance due</THead>
+                                        </TRow>
+                                    </THeader>
+                                    <TBody>
+                                        {linkedInvoices.map((c: ReconcileCandidate) => (
+                                            <TRow key={c.inv_id} className="border-b border-[#e2e8f0] last:border-b-0">
+                                                <TCell className="px-2 py-2 text-xs font-medium text-[#172033]">
+                                                    {c.inv_number || c.inv_id.slice(0, 8)}
+                                                </TCell>
+                                                <TCell className="px-2 py-2 text-xs text-[#506080]">
+                                                    {c.client_company_name || '—'}
+                                                </TCell>
+                                                <TCell className="px-2 py-2 text-xs text-[#506080]">
+                                                    {c.inv_date ? String(c.inv_date).slice(0, 10) : '—'}
+                                                </TCell>
+                                                <TCell className="px-2 py-2 text-right font-mono text-xs tabular-nums text-[#172033]">
+                                                    {formatMoney(c.inv_total)}
+                                                </TCell>
+                                                <TCell className="px-2 py-2 text-right font-mono text-xs tabular-nums text-[#172033]">
+                                                    {formatMoney(c.inv_balance_due ?? c.inv_total)}
+                                                </TCell>
+                                            </TRow>
+                                        ))}
+                                        {linkedInvoices.length === 0 ? (
+                                            <TRow>
+                                                <TCell colSpan={5} className="px-3 py-4 text-sm text-[#64748b]">
+                                                    Linked to {reconciledInvIds.length} invoice(s).
+                                                </TCell>
+                                            </TRow>
+                                        ) : null}
+                                    </TBody>
+                                </Table>
+                            </div>
+
+                            <div className="flex items-center justify-between">
+                                <span className="text-xs text-[#506080]">
+                                    Applied {formatMoney(selectedTxn.applied_total)} across {linkedInvoices.length || reconciledInvIds.length} invoice(s).
+                                </span>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    className="h-9 rounded-full px-5"
+                                    onClick={deReconcile}
+                                    disabled={isSaving}
+                                >
+                                    {isSaving ? (
+                                        <Icon icon="mdi:loading" className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                        <Icon icon="mdi:link-variant-off" className="h-4 w-4" />
+                                    )}
+                                    De-reconcile
+                                </Button>
+                            </div>
+                        </div>
                     ) : (
                         <div className="flex flex-col gap-3">
                             <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-[#d8c6a1] bg-[#fdf8ec] px-3 py-2 text-sm">
@@ -1188,6 +1402,18 @@ const BankStatement = () => {
                                         : ' ✓'}
                                 </span>
                             </div>
+
+                            {aiSuggestLoading ? (
+                                <div className="flex items-center gap-1.5 text-xs text-[#4338ca]">
+                                    <Icon icon="mdi:loading" className="h-3.5 w-3.5 animate-spin" />
+                                    AI is suggesting matches…
+                                </div>
+                            ) : Object.keys(aiSuggest).length > 0 ? (
+                                <div className="flex items-center gap-1.5 text-xs text-[#4338ca]">
+                                    <Icon icon="mdi:sparkles" className="h-3.5 w-3.5" />
+                                    AI pre-ticked its confident matches — review before saving.
+                                </div>
+                            ) : null}
 
                             <div className="overflow-x-auto rounded-md border border-[#9eb8dc]/70 bg-[#fdf8ec]/70">
                                 <Table>
@@ -1224,7 +1450,18 @@ const BankStatement = () => {
                                                         />
                                                     </TCell>
                                                     <TCell className="px-2 py-2 text-xs font-medium text-[#172033]">
-                                                        {c.inv_number || c.inv_id.slice(0, 8)}
+                                                        <span className="flex items-center gap-1.5">
+                                                            {c.inv_number || c.inv_id.slice(0, 8)}
+                                                            {aiSuggest[c.inv_id] ? (
+                                                                <span
+                                                                    title={aiSuggest[c.inv_id].reason || 'AI-suggested match'}
+                                                                    className="inline-flex items-center gap-0.5 rounded-full bg-[#eef2ff] px-1.5 py-0.5 text-[10px] font-medium text-[#4338ca]"
+                                                                >
+                                                                    <Icon icon="mdi:sparkles" className="h-3 w-3" />
+                                                                    {Math.round(aiSuggest[c.inv_id].confidence * 100)}%
+                                                                </span>
+                                                            ) : null}
+                                                        </span>
                                                     </TCell>
                                                     <TCell className="px-2 py-2 text-xs text-[#506080]">
                                                         {c.client_company_name || '—'}

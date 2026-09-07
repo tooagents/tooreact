@@ -12,8 +12,10 @@ export type BankTxn = {
     balance: number | string | null;
     source: string | null;
     status: string | null;
+    bank_name: string | null;  // short formal abbreviation, e.g. "TD"
     type: BankTxnType | string | null;
     note: string | null;
+    is_reconciled: boolean;    // binary flag: true only when fully applied
     // Derived on read by the backend:
     applied_total: number | string;   // sum of linked invoice payments
     unapplied: number | string;       // credit - applied_total (>= 0)
@@ -29,6 +31,7 @@ export type BankTxnCreate = {
     credit?: number | string | null;
     balance?: number | string | null;
     source?: string | null;
+    bank_name?: string | null;
     type?: BankTxnType | string | null;
     note?: string | null;
 };
@@ -52,6 +55,18 @@ export type ReconcileAllocation = {
     pay_amount: number;
 };
 
+// One AI-suggested invoice match for a deposit.
+export type ReconcileSuggestion = {
+    inv_id: string;
+    confidence: number;        // 0..1
+    reason: string | null;
+};
+
+export type ReconcileSuggestResult = {
+    suggestions: ReconcileSuggestion[];
+    model: string | null;
+};
+
 export type InterpretedTxn = {
     type: BankTxnType | string;
     txn_date: string | null;
@@ -59,6 +74,7 @@ export type InterpretedTxn = {
     debit: string | null;
     credit: string | null;
     balance: string | null;
+    bank_name: string | null;
 };
 
 export type InterpretResult = {
@@ -182,6 +198,15 @@ export const oBankAPI = {
             `/acc/o_bankstatement/get_reconcile_view?bank_txn_id=${encodeURIComponent(bankTxnId)}`,
         );
         return parseApiResponse<ReconcileView>(response, 'Failed to load reconcile view');
+    },
+
+    // AI suggestion of which invoices this deposit paid. Advisory: the backend
+    // returns an empty list (never an error) when the AI is unavailable.
+    async suggestReconcile(bankTxnId: string): Promise<ReconcileSuggestResult> {
+        const response = await apiFetch(
+            `/acc/o_bankstatement/suggest_reconcile?bank_txn_id=${encodeURIComponent(bankTxnId)}`,
+        );
+        return parseApiResponse<ReconcileSuggestResult>(response, 'Failed to load AI reconcile suggestion');
     },
 
     async reconcile(bankTxnId: string, allocations: ReconcileAllocation[]): Promise<ReconcileView> {
