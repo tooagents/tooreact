@@ -50,11 +50,6 @@ export type ReconcileView = {
     candidates: ReconcileCandidate[];
 };
 
-export type ReconcileAllocation = {
-    inv_id: string;
-    pay_amount: number;
-};
-
 // One AI-suggested invoice match for a deposit.
 export type ReconcileSuggestion = {
     inv_id: string;
@@ -209,10 +204,13 @@ export const oBankAPI = {
         return parseApiResponse<ReconcileSuggestResult>(response, 'Failed to load AI reconcile suggestion');
     },
 
-    async reconcile(bankTxnId: string, allocations: ReconcileAllocation[]): Promise<ReconcileView> {
+    // Reconcile is a match: send the matched invoice ids. The backend records the
+    // deposit as their payment and runs the payment logic (amounts are backend-owned).
+    // Passing [] de-reconciles.
+    async reconcile(bankTxnId: string, invIds: string[]): Promise<ReconcileView> {
         const response = await apiFetch('/acc/o_bankstatement/reconcile', {
             method: 'POST',
-            body: JSON.stringify({ bank_txn_id: bankTxnId, allocations }),
+            body: JSON.stringify({ bank_txn_id: bankTxnId, inv_ids: invIds }),
         });
         return parseApiResponse<ReconcileView>(response, 'Failed to reconcile deposit');
     },

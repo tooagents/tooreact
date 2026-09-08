@@ -552,6 +552,9 @@ const BankStatement = () => {
 
     // Live allocation: each ticked invoice takes min(its balance_due, remaining deposit).
     const allocation = useMemo(() => {
+        // Preview only. The backend owns the real amounts: on save it records the
+        // deposit against the matched invoices and runs the payment logic. This mirror
+        // just shows the user roughly what will apply.
         let remaining = depositAmount;
         const alloc: Record<string, number> = {};
         for (const c of candidates) {
@@ -582,10 +585,12 @@ const BankStatement = () => {
         setError(null);
         setMsg(null);
         try {
-            const allocations = Object.entries(allocation.alloc)
-                .filter(([, amt]) => amt > 0)
-                .map(([inv_id, pay_amount]) => ({ inv_id, pay_amount }));
-            const view = await oBankAPI.reconcile(selectedTxn.id, allocations);
+            // Reconcile is a match: send only the ticked invoice ids. The backend
+            // records the deposit as their payment and runs the payment logic.
+            const invIds = candidates
+                .filter((c) => checked[c.inv_id])
+                .map((c) => c.inv_id);
+            const view = await oBankAPI.reconcile(selectedTxn.id, invIds);
             setReconcile(view);
             setMsg(
                 allocation.unapplied > 0
@@ -597,7 +602,7 @@ const BankStatement = () => {
                 {
                     event: 'reconciled',
                     title: `Reconciled ${selectedTxn.txn_date ?? ''} ${formatMoney(depositAmount)}`,
-                    detail: `${allocations.length} invoice(s)${
+                    detail: `${invIds.length} invoice(s)${
                         allocation.unapplied > 0 ? ` · unapplied ${formatMoney(allocation.unapplied)}` : ' · exact'
                     }`,
                     tone: 'ok',
