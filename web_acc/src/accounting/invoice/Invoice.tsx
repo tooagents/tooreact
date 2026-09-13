@@ -105,7 +105,9 @@ const buildReminderMailto = (inv: InvoiceType): string => {
         '',
         `This is a friendly reminder that invoice ${number} for ${amount} ${due ? `was due on ${due}` : 'is now due'} and remains outstanding.`,
         '',
-        'Please arrange payment at your earliest convenience. If payment is already on its way, kindly disregard this note.',
+        'Please arrange payment at your earliest convenience. Please note that late-payment interest may apply to overdue invoices going forward.',
+        '',
+        'If payment is already on its way, kindly disregard this note.',
         '',
         'Thank you,',
     ].join('\n');
