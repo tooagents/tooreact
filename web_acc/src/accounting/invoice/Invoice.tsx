@@ -89,6 +89,29 @@ const normalizeRate = (v: number | string | null | undefined): number => {
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
+// Build a mailto: link that opens the owner's mail app with a payment-reminder
+// draft prefilled from the invoice (number, balance, due date). No backend send;
+// the owner reviews and sends from their own client. Only meaningful when the
+// invoice carries a balance and the client has an email on file.
+const buildReminderMailto = (inv: InvoiceType): string => {
+    const to = (inv.client_email ?? '').trim();
+    const number = inv.inv_number || 'your invoice';
+    const amount = formatMoney(num(inv.inv_balance_due) || inv.inv_total);
+    const due = inv.inv_due_date ? formatDate(String(inv.inv_due_date)) : '';
+    const contact = (inv.client_contact_name || inv.client_company_name || '').trim();
+    const subject = `Payment reminder — ${number}`;
+    const body = [
+        contact ? `Hi ${contact},` : 'Hello,',
+        '',
+        `This is a friendly reminder that invoice ${number} for ${amount} ${due ? `was due on ${due}` : 'is now due'} and remains outstanding.`,
+        '',
+        'Please arrange payment at your earliest convenience. If payment is already on its way, kindly disregard this note.',
+        '',
+        'Thank you,',
+    ].join('\n');
+    return `mailto:${to}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+};
+
 // Editable-field affordance: a subtle grey fill (no border) that darkens on
 // hover/focus — the compact "this is editable" cue used by Stripe/QuickBooks/Xero.
 // Preferred over an underline rule, which reads too sparse in tight rows.
@@ -1616,6 +1639,26 @@ const Invoice = () => {
                                                                 {head.inv_number || head.inv_id.slice(0, 8)}
                                                             </span>
                                                             <Badge className={`whitespace-nowrap ${sc.chip}`}>{sc.label}</Badge>
+                                                            {String(head.inv_payment_status || '').toLowerCase() === INV_STATUS.Overdue && (head.client_email ?? '').trim()
+                                                                ? (() => {
+                                                                      const dueStr = head.inv_due_date ? String(head.inv_due_date).slice(0, 10) : '';
+                                                                      const daysLate = dueStr
+                                                                          ? Math.max(0, Math.round((Date.parse(`${todayStr}T00:00:00`) - Date.parse(`${dueStr}T00:00:00`)) / 86400000))
+                                                                          : 0;
+                                                                      return (
+                                                                          <Button
+                                                                              asChild
+                                                                              variant="outline"
+                                                                              className="h-7 shrink-0 gap-1.5 rounded-full border-[#e0a0a0] bg-[#fbe9e9] px-2.5 text-xs text-[#7a2a2a] hover:bg-[#f7dede] hover:text-[#661f1f]"
+                                                                          >
+                                                                              <a href={buildReminderMailto(head)}>
+                                                                                  <Icon icon="solar:letter-broken" className="h-3.5 w-3.5" />
+                                                                                  {daysLate > 0 ? `Send reminder · ${daysLate} day${daysLate === 1 ? '' : 's'} late` : 'Send reminder'}
+                                                                              </a>
+                                                                          </Button>
+                                                                      );
+                                                                  })()
+                                                                : null}
                                                         </div>
                                                         <div className="mt-2 text-sm font-semibold text-[#172033]">
                                                             {head.client_company_name || head.client_contact_name || 'No client'}

@@ -6,14 +6,23 @@ import { Button } from 'src/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from 'src/components/ui/card';
 import { formatDate, formatMoney } from 'src/core/format';
 import { AccountRow, jeAPI, JournalEntryRow, LedgerRow } from 'src/accounting/je/je-api';
+import { INV_STATUS, Invoice, deriveInvStatus, oInvAPI } from 'src/accounting/invoice/o_inv-api';
 
 type OverviewData = {
     accounts: AccountRow[];
     entries: JournalEntryRow[];
     ledgerRows: LedgerRow[];
+    invoices: Invoice[];
 };
 
-type StatusTone = 'emerald' | 'amber' | 'blue';
+// Caller's LOCAL date as YYYY-MM-DD — passed to deriveInvStatus so overdue is tz-correct.
+const localToday = () => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+type StatusTone = 'emerald' | 'amber' | 'blue' | 'red';
 
 const getNumber = (value: unknown) => {
     const parsed = Number(value ?? 0);
@@ -55,6 +64,7 @@ const statusToneClass: Record<StatusTone, string> = {
     emerald: 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-300',
     amber: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-300',
     blue: 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/40 dark:bg-blue-950/20 dark:text-blue-300',
+    red: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-300',
 };
 
 const Overview = () => {
@@ -62,6 +72,7 @@ const Overview = () => {
         accounts: [],
         entries: [],
         ledgerRows: [],
+        invoices: [],
     });
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -73,14 +84,15 @@ const Overview = () => {
             setLoading(true);
             setError(null);
             try {
-                const [accounts, entries, ledgerRows] = await Promise.all([
+                const [accounts, entries, ledgerRows, invoices] = await Promise.all([
                     jeAPI.listAccounts(),
                     jeAPI.listEntries(),
                     jeAPI.listLedger(),
+                    oInvAPI.listInvoices(),
                 ]);
 
                 if (!mounted) return;
-                setData({ accounts, entries, ledgerRows });
+                setData({ accounts, entries, ledgerRows, invoices });
             } catch (err) {
                 if (!mounted) return;
                 setError(err instanceof Error ? err.message : 'Failed to load accounting overview.');
@@ -95,6 +107,11 @@ const Overview = () => {
             mounted = false;
         };
     }, []);
+
+    const overdueInvoices = useMemo(() => {
+        const today = localToday();
+        return data.invoices.filter((inv) => deriveInvStatus(inv, today) === INV_STATUS.Overdue);
+    }, [data.invoices]);
 
     const activeAccounts = useMemo(() => getActivePostingAccounts(data.accounts), [data.accounts]);
     const recentEntries = useMemo(() => sortByEntryDate(data.entries).slice(0, 5), [data.entries]);
@@ -150,11 +167,13 @@ const Overview = () => {
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <MetricCard
-                    icon="mdi:book-open-page-variant-outline"
-                    label="Journal entries"
-                    value={loading ? '...' : String(data.entries.length)}
-                    detail={`${openEntries.length} open for review`}
-                    tone="blue"
+                    icon="mdi:file-document-outline"
+                    label="Invoices"
+                    value={loading ? '...' : String(data.invoices.length)}
+                    detail={`${overdueInvoices.length} overdue`}
+                    tone={overdueInvoices.length > 0 ? 'red' : 'blue'}
+                    urgent={!loading && overdueInvoices.length > 0}
+                    to="/app/inv/invoices"
                 />
                 <MetricCard
                     icon="mdi:scale-balance"
@@ -293,30 +312,47 @@ const MetricCard = ({
     value,
     detail,
     tone,
+    urgent = false,
+    to,
 }: {
     icon: string;
     label: string;
     value: string;
     detail: string;
     tone: StatusTone;
-}) => (
-    <Card className="border-secondary/20 shadow-none">
-        <CardContent className="p-4">
-            <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                    <div className="text-xs font-medium uppercase text-muted-foreground">{label}</div>
-                    <div className="mt-2 font-mono text-2xl font-semibold tabular-nums text-[#172033] dark:text-white">
-                        {value}
+    urgent?: boolean;
+    to?: string;
+}) => {
+    const card = (
+        <Card className={`h-full shadow-none transition-colors ${urgent ? 'border-red-300 ring-1 ring-red-200 dark:border-red-900/60 dark:ring-red-900/40' : 'border-secondary/20'} ${to ? 'hover:border-primary/40 hover:bg-muted/30' : ''}`}>
+            <CardContent className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                        <div className="text-xs font-medium uppercase text-muted-foreground">{label}</div>
+                        <div className="mt-2 font-mono text-2xl font-semibold tabular-nums text-[#172033] dark:text-white">
+                            {value}
+                        </div>
+                        <div className={`mt-1 flex items-center gap-1 text-xs ${urgent ? 'font-semibold text-red-700 dark:text-red-300' : 'text-muted-foreground'}`}>
+                            {detail}
+                            {to ? <Icon icon="mdi:arrow-right" className="h-3.5 w-3.5" /> : null}
+                        </div>
                     </div>
-                    <div className="mt-1 text-xs text-muted-foreground">{detail}</div>
+                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md border ${statusToneClass[tone]}`}>
+                        <Icon icon={icon} className="h-5 w-5" />
+                    </div>
                 </div>
-                <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-md border ${statusToneClass[tone]}`}>
-                    <Icon icon={icon} className="h-5 w-5" />
-                </div>
-            </div>
-        </CardContent>
-    </Card>
-);
+            </CardContent>
+        </Card>
+    );
+
+    return to ? (
+        <Link to={to} className="block">
+            {card}
+        </Link>
+    ) : (
+        card
+    );
+};
 
 const ActionLink = ({ icon, title, detail, to }: { icon: string; title: string; detail: string; to: string }) => (
     <Link
