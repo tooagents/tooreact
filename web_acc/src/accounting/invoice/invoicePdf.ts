@@ -60,34 +60,136 @@ export function printInvoicePdf(inv: Partial<Invoice>, biz: Partial<InterfaceBE>
     doc.close();
 }
 
-// Produce a PDF Blob from the template HTML entirely client-side (jsPDF + the
-// bundled html2canvas). Lower fidelity than the browser print engine for exotic
-// CSS, but it yields an actual file we can attach/share/download. jsPDF and
-// html2canvas are lazy-imported so they stay out of the main bundle.
+// A4 dimensions in CSS px at 96dpi — the layout width the templates are
+// designed against. Used to size the render frame so html2canvas rasterizes
+// at the right scale.
+const A4_PX_W = 794;
+const A4_PX_H = 1123;
+
+// Render the template HTML in an off-screen, isolated iframe and rasterize it
+// with html2canvas. Rendering in an iframe (rather than jsPDF's doc.html(),
+// which injects into the LIVE page) keeps the app's global CSS out of the
+// capture — Tailwind v4 emits oklch() colors, which html2canvas cannot parse
+// and which otherwise throw and hang the export. The template output is a
+// self-contained document (inline <style>, base64 logo), so the frame shows
+// exactly the PDF content, same as the on-screen preview.
+async function renderInvoiceCanvas(html: string): Promise<HTMLCanvasElement> {
+    const frame = document.createElement('iframe');
+    frame.setAttribute('aria-hidden', 'true');
+    frame.style.position = 'fixed';
+    frame.style.left = '-10000px';
+    frame.style.top = '0';
+    frame.style.width = `${A4_PX_W}px`;
+    frame.style.height = `${A4_PX_H}px`;
+    frame.style.border = '0';
+    frame.style.background = '#ffffff';
+    document.body.appendChild(frame);
+
+    try {
+        const idoc = frame.contentDocument;
+        if (!idoc) throw new Error('Could not create the PDF render frame.');
+        idoc.open();
+        idoc.write(html);
+        idoc.close();
+
+        // Wait for the frame to finish parsing, then for fonts/images to settle.
+        await new Promise<void>((resolve) => {
+            if (idoc.readyState === 'complete') resolve();
+            else frame.addEventListener('load', () => resolve(), { once: true });
+        });
+        try {
+            await (idoc as Document & { fonts?: FontFaceSet }).fonts?.ready;
+        } catch {
+            /* fonts.ready unsupported — proceed */
+        }
+        await new Promise((r) => window.setTimeout(r, 60));
+
+        // Grow the frame to the full content height so nothing is clipped.
+        const contentH = Math.max(idoc.documentElement.scrollHeight, idoc.body.scrollHeight, A4_PX_H);
+        frame.style.height = `${contentH}px`;
+
+        const { default: html2canvas } = await import('html2canvas');
+        return await html2canvas(idoc.body, {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: '#ffffff',
+            width: A4_PX_W,
+            height: contentH,
+            windowWidth: A4_PX_W,
+            windowHeight: contentH,
+        });
+    } finally {
+        frame.remove();
+    }
+}
+
+// Produce a PDF Blob from the template HTML entirely client-side. The invoice
+// is rasterized in an isolated iframe (see renderInvoiceCanvas) and paged onto
+// A4. jsPDF and html2canvas are lazy-imported so they stay out of the main
+// bundle. A watchdog rejects if rendering stalls, so the UI can never freeze.
 export async function generateInvoicePdfBlob(
     inv: Partial<Invoice>,
     biz: Partial<InterfaceBE>,
     templateId: string,
 ): Promise<Blob> {
     const html = genInvoiceHTML(inv, biz, 'pdf', templateId);
+
+    const canvas = await Promise.race([
+        renderInvoiceCanvas(html),
+        new Promise<never>((_, reject) =>
+            window.setTimeout(() => reject(new Error('PDF rendering timed out.')), 20000),
+        ),
+    ]);
+
     const { jsPDF } = await import('jspdf');
-
-    // A4 in points (72dpi). windowWidth is the CSS px the html is laid out at
-    // (A4 width at 96dpi ≈ 794px) so html2canvas rasterizes at the right scale.
-    const PT_PER_PAGE_W = 595.28;
-    const MARGIN = 24;
     const doc = new jsPDF({ unit: 'pt', format: 'a4', compress: true });
+    const pageW = doc.internal.pageSize.getWidth();
+    const pageH = doc.internal.pageSize.getHeight();
 
-    await doc.html(html, {
-        x: MARGIN,
-        y: MARGIN,
-        width: PT_PER_PAGE_W - MARGIN * 2,
-        windowWidth: 794,
-        autoPaging: 'text',
-        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff' },
-    });
+    // Fit the rasterized invoice to the page width; slice it across pages by
+    // shifting the (single, full-height) image up by one page per addPage.
+    const imgW = pageW;
+    const imgH = (canvas.height * imgW) / canvas.width;
+    const imgData = canvas.toDataURL('image/jpeg', 0.92);
+
+    // Page count with a tolerance: px→pt scaling and trailing whitespace can
+    // leave the image a few points over an exact page multiple, which would
+    // otherwise ceil() into a spurious blank final page. TOLERANCE_PT of slack
+    // absorbs that without clipping real content.
+    const TOLERANCE_PT = 4;
+    const pageCount = Math.max(1, Math.ceil((imgH - TOLERANCE_PT) / pageH));
+    for (let page = 0; page < pageCount; page += 1) {
+        if (page > 0) doc.addPage();
+        doc.addImage(imgData, 'JPEG', 0, -page * pageH, imgW, imgH, undefined, 'FAST');
+    }
 
     return doc.output('blob');
+}
+
+// Download the invoice as a PDF file. Uses the SAME renderer as the email
+// attachment (generateInvoicePdfBlob), so the downloaded file is byte-for-byte
+// the document the client receives by email — same template, same layout. This
+// is a real file download (no browser print dialog).
+export async function downloadInvoicePdf(
+    inv: Partial<Invoice>,
+    biz: Partial<InterfaceBE>,
+    templateId: string,
+): Promise<void> {
+    const blob = await generateInvoicePdfBlob(inv, biz, templateId);
+    const filename = invoicePdfFilename(inv, biz);
+    const url = URL.createObjectURL(blob);
+    try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+    } finally {
+        // Revoke after a tick so the download has a chance to start.
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
 }
 
 // Convert a Blob to a bare base64 string (no "data:...;base64," prefix) for

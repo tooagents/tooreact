@@ -14,7 +14,7 @@ import { FeeOption, INV_STATUS, Invoice as InvoiceType, InvoiceItem, InvoiceUpda
 import { clientsAPI } from 'src/settings/clients/clients-api';
 import { ClientDB, getClientDisplayName, getClientId } from 'src/types/type_client';
 import InvoiceHtmlPreview from 'src/accounting/invoice/InvoiceHtmlPreview';
-import { printInvoicePdf, emailInvoice } from 'src/accounting/invoice/invoicePdf';
+import { downloadInvoicePdf, emailInvoice } from 'src/accounting/invoice/invoicePdf';
 import { TEMPLATE_IDS } from 'src/accounting/invoice/templates';
 import { meOrgAPI } from 'src/settings/me/me-org-api';
 import type { InterfaceBE } from 'src/types/type_be';
@@ -221,6 +221,7 @@ const Invoice = () => {
     const [templatePickerFor, setTemplatePickerFor] = useState<InvoiceType | null>(null);
     const [savingTemplate, setSavingTemplate] = useState(false);
     const [emailingId, setEmailingId] = useState<string | null>(null);
+    const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
     // Record-payment dialog for the selected invoice.
     const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
@@ -850,8 +851,20 @@ const Invoice = () => {
         }
     };
 
-    // Print-to-PDF (browser "Save as PDF") from the same HTML as the preview.
-    const downloadPdf = (inv: InvoiceType) => printInvoicePdf(inv, biz, templateOf(inv));
+    // Download the invoice PDF. Uses the same renderer as the email attachment
+    // (downloadInvoicePdf → generateInvoicePdfBlob), so the file the owner saves
+    // is identical to the one the client receives — same template, same layout.
+    const downloadPdf = async (inv: InvoiceType) => {
+        setDownloadingId(inv.inv_id);
+        setMsg(null);
+        try {
+            await downloadInvoicePdf(inv, biz, templateOf(inv));
+        } catch (err) {
+            setMsg(err instanceof Error ? err.message : 'Failed to download the invoice PDF.');
+        } finally {
+            setDownloadingId(null);
+        }
+    };
 
     // Render the PDF client-side and send it via the backend (Brevo) with the
     // PDF attached, to the client's email.
@@ -1641,9 +1654,14 @@ const Invoice = () => {
                                             type="button"
                                             variant="outline"
                                             className="h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs"
-                                            onClick={() => downloadPdf(detail ?? selectedInvoice)}
+                                            onClick={() => void downloadPdf(detail ?? selectedInvoice)}
+                                            disabled={downloadingId === selectedInvoice.inv_id}
                                         >
-                                            <Icon icon="solar:download-minimalistic-broken" className="h-4 w-4" />
+                                            {downloadingId === selectedInvoice.inv_id ? (
+                                                <Icon icon="mdi:loading" className="h-4 w-4 animate-spin" />
+                                            ) : (
+                                                <Icon icon="solar:download-minimalistic-broken" className="h-4 w-4" />
+                                            )}
                                             PDF
                                         </Button>
                                         <Button
