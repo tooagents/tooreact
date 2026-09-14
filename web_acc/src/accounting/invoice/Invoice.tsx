@@ -23,6 +23,10 @@ import type { InterfaceBE } from 'src/types/type_be';
 /* Payment status visual config                                        */
 /* ------------------------------------------------------------------ */
 
+// Emailing invoices is temporarily turned off. Flip to true to restore the
+// Email button and the send-email flow.
+const EMAIL_ENABLED = false;
+
 type StatusConfig = { label: string; chip: string };
 
 const STATUS_CONFIG: Record<string, StatusConfig> = {
@@ -1664,19 +1668,21 @@ const Invoice = () => {
                                             )}
                                             PDF
                                         </Button>
-                                        <Button
-                                            type="button"
-                                            className="h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs"
-                                            onClick={() => void sendEmail(detail ?? selectedInvoice)}
-                                            disabled={emailingId === selectedInvoice.inv_id || !(selectedInvoice.client_email ?? '').trim()}
-                                        >
-                                            {emailingId === selectedInvoice.inv_id ? (
-                                                <Icon icon="mdi:loading" className="h-4 w-4 animate-spin" />
-                                            ) : (
-                                                <Icon icon="solar:letter-broken" className="h-4 w-4" />
-                                            )}
-                                            Email
-                                        </Button>
+                                        {EMAIL_ENABLED && (
+                                            <Button
+                                                type="button"
+                                                className="h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs"
+                                                onClick={() => void sendEmail(detail ?? selectedInvoice)}
+                                                disabled={emailingId === selectedInvoice.inv_id || !(selectedInvoice.client_email ?? '').trim()}
+                                            >
+                                                {emailingId === selectedInvoice.inv_id ? (
+                                                    <Icon icon="mdi:loading" className="h-4 w-4 animate-spin" />
+                                                ) : (
+                                                    <Icon icon="solar:letter-broken" className="h-4 w-4" />
+                                                )}
+                                                Email
+                                            </Button>
+                                        )}
                                         <Button
                                             type="button"
                                             variant="outline"
@@ -1842,34 +1848,6 @@ const Invoice = () => {
                                                 </div>
                                             </div>
 
-                                            {/* Live template preview — same HTML the PDF/email uses */}
-                                            <div className="border-b border-[#dbe4f0] p-4">
-                                                <div className="mb-2 flex items-center justify-between">
-                                                    <span className="text-[10px] font-medium uppercase tracking-wide text-[#64748b]">
-                                                        Preview · {templateOf(head)}
-                                                    </span>
-                                                    <Button
-                                                        type="button"
-                                                        variant="ghostprimary"
-                                                        size="sm"
-                                                        className="h-7 gap-1.5 rounded-full px-2.5 text-xs"
-                                                        onClick={() => setTemplatePickerFor(head)}
-                                                    >
-                                                        <Icon icon="solar:gallery-wide-broken" className="h-4 w-4" />
-                                                        Change template
-                                                    </Button>
-                                                </div>
-                                                <div className="overflow-hidden rounded-md border border-[#dbe4f0] bg-white">
-                                                    <InvoiceHtmlPreview
-                                                        invoice={head}
-                                                        biz={biz}
-                                                        templateId={templateOf(head)}
-                                                        mode="view"
-                                                        className="h-[540px] w-full border-0 bg-white"
-                                                    />
-                                                </div>
-                                            </div>
-
                                             {/* Line items */}
                                             <div className="overflow-x-auto">
                                                 <Table>
@@ -1977,6 +1955,34 @@ const Invoice = () => {
                                                         <span>Balance due</span>
                                                         <span className="font-mono tabular-nums text-[#7a2a2a]">{formatMoney(head.inv_balance_due)}</span>
                                                     </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Live template preview — same HTML the PDF/email uses */}
+                                            <div className="border-t border-[#dbe4f0] p-4">
+                                                <div className="mb-2 flex items-center justify-between">
+                                                    <span className="text-[10px] font-medium uppercase tracking-wide text-[#64748b]">
+                                                        Preview · {templateOf(head)}
+                                                    </span>
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghostprimary"
+                                                        size="sm"
+                                                        className="h-7 gap-1.5 rounded-full px-2.5 text-xs"
+                                                        onClick={() => setTemplatePickerFor(head)}
+                                                    >
+                                                        <Icon icon="solar:gallery-wide-broken" className="h-4 w-4" />
+                                                        Change template
+                                                    </Button>
+                                                </div>
+                                                <div className="overflow-hidden rounded-md border border-[#dbe4f0] bg-white">
+                                                    <InvoiceHtmlPreview
+                                                        invoice={head}
+                                                        biz={biz}
+                                                        templateId={templateOf(head)}
+                                                        mode="view"
+                                                        className="h-[540px] w-full border-0 bg-white"
+                                                    />
                                                 </div>
                                             </div>
                                         </div>

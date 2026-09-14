@@ -238,6 +238,10 @@ export async function emailInvoice(
     biz: Partial<InterfaceBE>,
     templateId: string,
 ): Promise<{ to: string }> {
+    // Emailing invoices is temporarily disabled — will be restored later.
+    // Remove this guard (and re-enable the Email button in Invoice.tsx) to bring it back.
+    throw new Error('Emailing invoices is temporarily disabled.');
+
     const blob = await generateInvoicePdfBlob(inv, biz, templateId);
     const pdf_base64 = await blobToBase64(blob);
     const filename = invoicePdfFilename(inv, biz);
