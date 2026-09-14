@@ -13,6 +13,11 @@ import { formatDate, formatMoney } from 'src/core/format';
 import { FeeOption, INV_STATUS, Invoice as InvoiceType, InvoiceItem, InvoiceUpdate, ItemCatalog, PaymentMethod, TaxOption, deriveInvStatus, oInvAPI } from 'src/accounting/invoice/o_inv-api';
 import { clientsAPI } from 'src/settings/clients/clients-api';
 import { ClientDB, getClientDisplayName, getClientId } from 'src/types/type_client';
+import InvoiceHtmlPreview from 'src/accounting/invoice/InvoiceHtmlPreview';
+import { printInvoicePdf, emailInvoice } from 'src/accounting/invoice/invoicePdf';
+import { TEMPLATE_IDS } from 'src/accounting/invoice/templates';
+import { meOrgAPI } from 'src/settings/me/me-org-api';
+import type { InterfaceBE } from 'src/types/type_be';
 
 /* ------------------------------------------------------------------ */
 /* Payment status visual config                                        */
@@ -209,6 +214,13 @@ const Invoice = () => {
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [detail, setDetail] = useState<InvoiceType | null>(null);
     const [detailLoading, setDetailLoading] = useState(false);
+
+    // Business entity (logo, name, address…) — feeds the invoice templates.
+    const [biz, setBiz] = useState<Partial<InterfaceBE>>({});
+    // Which invoice the template picker is open for; null = closed.
+    const [templatePickerFor, setTemplatePickerFor] = useState<InvoiceType | null>(null);
+    const [savingTemplate, setSavingTemplate] = useState(false);
+    const [emailingId, setEmailingId] = useState<string | null>(null);
 
     // Record-payment dialog for the selected invoice.
     const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
@@ -808,6 +820,54 @@ const Invoice = () => {
         [activeInvoices, selectedId],
     );
 
+    // Load the business entity once — templates render its logo/name/address.
+    useEffect(() => {
+        let cancelled = false;
+        void meOrgAPI
+            .getMyOrg()
+            .then((org) => { if (!cancelled) setBiz(org ?? {}); })
+            .catch(() => { /* templates fall back to blank business fields */ });
+        return () => { cancelled = true; };
+    }, []);
+
+    // t18 is a promo/upsell placeholder in the source app, not a real layout — hide it.
+    const templateChoices = useMemo(() => TEMPLATE_IDS.filter((id) => id !== 't18'), []);
+    // Effective template for an invoice: its own if set, otherwise default to t1.
+    const templateOf = (inv: InvoiceType) => inv.inv_template_id || 't1';
+
+    // Persist a template choice, then refresh so the list + detail re-render.
+    const applyTemplate = async (inv: InvoiceType, templateId: string) => {
+        setSavingTemplate(true);
+        setMsg(null);
+        try {
+            await oInvAPI.saveInvoice({ inv_id: inv.inv_id, inv_template_id: templateId });
+            setTemplatePickerFor(null);
+            await refresh();
+        } catch (err) {
+            setMsg(err instanceof Error ? err.message : 'Failed to change template.');
+        } finally {
+            setSavingTemplate(false);
+        }
+    };
+
+    // Print-to-PDF (browser "Save as PDF") from the same HTML as the preview.
+    const downloadPdf = (inv: InvoiceType) => printInvoicePdf(inv, biz, templateOf(inv));
+
+    // Render the PDF client-side and send it via the backend (Brevo) with the
+    // PDF attached, to the client's email.
+    const sendEmail = async (inv: InvoiceType) => {
+        setEmailingId(inv.inv_id);
+        setMsg(null);
+        try {
+            const { to } = await emailInvoice(inv, biz, templateOf(inv));
+            setMsg(`Invoice emailed${to ? ` to ${to}` : ''}.`);
+        } catch (err) {
+            setMsg(err instanceof Error ? err.message : 'Failed to send the invoice email.');
+        } finally {
+            setEmailingId(null);
+        }
+    };
+
     // Action-focused summary boxes. They read the reconciled stored status
     // (refresh() keeps inv_payment_status current), so the boxes and list badge
     // agree. "Due soon" is a date sub-window of the open statuses, not a status.
@@ -858,7 +918,7 @@ const Invoice = () => {
             <div className="lg:col-span-3 md:col-span-6 col-span-12">
                 <div className="p-[24px] text-center rounded-md border border-[#e0a0a0] bg-[#fbe9e9]">
                     <h3 className="text-[#7a2a2a] text-2xl font-semibold tabular-nums">
-                        {formatMoney(summary.overdueAmount)}
+                        {loading ? <LoadingSpinner variant="dots" size="lg" className="text-2xl" /> : formatMoney(summary.overdueAmount)}
                     </h3>
                     <h6 className="text-base text-[#7a2a2a]">
                         Overdue
@@ -871,7 +931,7 @@ const Invoice = () => {
             <div className="lg:col-span-3 md:col-span-6 col-span-12">
                 <div className="p-[24px] text-center rounded-md border border-[#d3dae3] bg-[#f1f4f8]">
                     <h3 className="text-[#3b5b8a] text-2xl font-semibold tabular-nums">
-                        {formatMoney(summary.awaiting)}
+                        {loading ? <LoadingSpinner variant="dots" size="lg" className="text-2xl" /> : formatMoney(summary.awaiting)}
                     </h3>
                     <h6 className="text-base text-[#3b5b8a]">Awaiting payment</h6>
                 </div>
@@ -879,7 +939,7 @@ const Invoice = () => {
             <div className="lg:col-span-3 md:col-span-6 col-span-12">
                 <div className="p-[24px] text-center rounded-md border border-[#e0cfa0] bg-[#faf3df]">
                     <h3 className="text-[#8a6d3b] text-2xl font-semibold tabular-nums">
-                        {formatMoney(summary.dueSoon)}
+                        {loading ? <LoadingSpinner variant="dots" size="lg" className="text-2xl" /> : formatMoney(summary.dueSoon)}
                     </h3>
                     <h6 className="text-base text-[#8a6d3b]">
                         Due soon
@@ -892,7 +952,7 @@ const Invoice = () => {
             <div className="lg:col-span-3 md:col-span-6 col-span-12">
                 <div className="p-[24px] text-center rounded-md border border-[#9fca9f] bg-[#e9f5e9]">
                     <h3 className="text-[#1f5a34] text-2xl font-semibold tabular-nums">
-                        {formatMoney(summary.collectedThisMonth)}
+                        {loading ? <LoadingSpinner variant="dots" size="lg" className="text-2xl" /> : formatMoney(summary.collectedThisMonth)}
                     </h3>
                     <h6 className="text-base text-[#1f5a34]">Collected this month</h6>
                 </div>
@@ -1210,6 +1270,50 @@ const Invoice = () => {
                             Save
                         </Button>
                     </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Template picker — thumbnails render the actual invoice in each layout */}
+            <Dialog open={Boolean(templatePickerFor)} onOpenChange={(open) => { if (!open) setTemplatePickerFor(null); }}>
+                <DialogContent className="sm:max-w-4xl">
+                    <DialogHeader>
+                        <DialogTitle className="text-base">Choose a template</DialogTitle>
+                        <DialogDescription>
+                            The invoice you send and its PDF use the selected design.
+                        </DialogDescription>
+                    </DialogHeader>
+                    <div className="grid max-h-[70vh] grid-cols-2 gap-3 overflow-y-auto p-1 sm:grid-cols-3">
+                        {templatePickerFor
+                            ? templateChoices.map((id) => {
+                                  const active = templateOf(templatePickerFor) === id;
+                                  return (
+                                      <button
+                                          key={id}
+                                          type="button"
+                                          disabled={savingTemplate}
+                                          onClick={() => void applyTemplate(templatePickerFor, id)}
+                                          className={`group relative overflow-hidden rounded-md border bg-white text-left transition-colors disabled:opacity-60 ${active ? 'border-primary ring-2 ring-primary/30' : 'border-[#dbe4f0] hover:border-primary/50'}`}
+                                      >
+                                          {/* pointer-events-none so clicks reach the button, not the iframe */}
+                                          <div className="pointer-events-none h-[220px] w-full overflow-hidden bg-white">
+                                              <InvoiceHtmlPreview
+                                                  invoice={templatePickerFor}
+                                                  biz={biz}
+                                                  templateId={id}
+                                                  mode="picker"
+                                                  className="h-[220px] w-full border-0 bg-white"
+                                                  title={`Template ${id}`}
+                                              />
+                                          </div>
+                                          <div className="flex items-center justify-between border-t border-[#dbe4f0] px-2 py-1.5">
+                                              <span className="text-xs font-medium uppercase text-[#64748b]">{id}</span>
+                                              {active ? <Icon icon="mdi:check-circle" className="h-4 w-4 text-primary" /> : null}
+                                          </div>
+                                      </button>
+                                  );
+                              })
+                            : null}
+                    </div>
                 </DialogContent>
             </Dialog>
 
@@ -1537,6 +1641,28 @@ const Invoice = () => {
                                             type="button"
                                             variant="outline"
                                             className="h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs"
+                                            onClick={() => downloadPdf(detail ?? selectedInvoice)}
+                                        >
+                                            <Icon icon="solar:download-minimalistic-broken" className="h-4 w-4" />
+                                            PDF
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            className="h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs"
+                                            onClick={() => void sendEmail(detail ?? selectedInvoice)}
+                                            disabled={emailingId === selectedInvoice.inv_id || !(selectedInvoice.client_email ?? '').trim()}
+                                        >
+                                            {emailingId === selectedInvoice.inv_id ? (
+                                                <Icon icon="mdi:loading" className="h-4 w-4 animate-spin" />
+                                            ) : (
+                                                <Icon icon="solar:letter-broken" className="h-4 w-4" />
+                                            )}
+                                            Email
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            className="h-8 shrink-0 gap-1.5 rounded-full px-3 text-xs"
                                             onClick={() => cloneInvoice(selectedInvoice)}
                                             disabled={cloningId === selectedInvoice.inv_id}
                                         >
@@ -1695,6 +1821,34 @@ const Invoice = () => {
                                                             </div>
                                                         </div>
                                                     </div>
+                                                </div>
+                                            </div>
+
+                                            {/* Live template preview — same HTML the PDF/email uses */}
+                                            <div className="border-b border-[#dbe4f0] p-4">
+                                                <div className="mb-2 flex items-center justify-between">
+                                                    <span className="text-[10px] font-medium uppercase tracking-wide text-[#64748b]">
+                                                        Preview · {templateOf(head)}
+                                                    </span>
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghostprimary"
+                                                        size="sm"
+                                                        className="h-7 gap-1.5 rounded-full px-2.5 text-xs"
+                                                        onClick={() => setTemplatePickerFor(head)}
+                                                    >
+                                                        <Icon icon="solar:gallery-wide-broken" className="h-4 w-4" />
+                                                        Change template
+                                                    </Button>
+                                                </div>
+                                                <div className="overflow-hidden rounded-md border border-[#dbe4f0] bg-white">
+                                                    <InvoiceHtmlPreview
+                                                        invoice={head}
+                                                        biz={biz}
+                                                        templateId={templateOf(head)}
+                                                        mode="view"
+                                                        className="h-[540px] w-full border-0 bg-white"
+                                                    />
                                                 </div>
                                             </div>
 
