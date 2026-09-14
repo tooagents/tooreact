@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from 'src/components/ui/card
 import { formatDate, formatMoney } from 'src/core/format';
 import { AccountRow, jeAPI, JournalEntryRow, LedgerRow } from 'src/accounting/je/je-api';
 import { INV_STATUS, Invoice, deriveInvStatus, oInvAPI } from 'src/accounting/invoice/o_inv-api';
+import LoadingSpinner from 'src/components/shared/LoadingSpinner';
 
 type OverviewData = {
     accounts: AccountRow[];
@@ -65,6 +66,14 @@ const statusToneClass: Record<StatusTone, string> = {
     amber: 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900/40 dark:bg-amber-950/20 dark:text-amber-300',
     blue: 'border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-900/40 dark:bg-blue-950/20 dark:text-blue-300',
     red: 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/40 dark:bg-red-950/20 dark:text-red-300',
+};
+
+// Per-tone text color for the thinking dots — a color set instead of a flat black "...".
+const toneTextClass: Record<StatusTone, string> = {
+    emerald: 'text-emerald-600 dark:text-emerald-400',
+    amber: 'text-amber-600 dark:text-amber-400',
+    blue: 'text-blue-600 dark:text-blue-400',
+    red: 'text-red-600 dark:text-red-400',
 };
 
 const Overview = () => {
@@ -169,7 +178,8 @@ const Overview = () => {
                 <MetricCard
                     icon="mdi:file-document-outline"
                     label="Invoices"
-                    value={loading ? '...' : String(data.invoices.length)}
+                    loading={loading}
+                    value={String(data.invoices.length)}
                     detail={`${overdueInvoices.length} overdue`}
                     tone={overdueInvoices.length > 0 ? 'red' : 'blue'}
                     urgent={!loading && overdueInvoices.length > 0}
@@ -178,21 +188,24 @@ const Overview = () => {
                 <MetricCard
                     icon="mdi:scale-balance"
                     label="Ledger check"
-                    value={loading ? '...' : formatMoney(Math.abs(ledgerDifference))}
+                    loading={loading}
+                    value={formatMoney(Math.abs(ledgerDifference))}
                     detail={Math.abs(ledgerDifference) < 0.005 ? 'Debits and credits match' : 'Difference needs attention'}
                     tone={healthTone}
                 />
                 <MetricCard
                     icon="mdi:format-list-bulleted-type"
                     label="Posting accounts"
-                    value={loading ? '...' : String(activeAccounts.length)}
+                    loading={loading}
+                    value={String(activeAccounts.length)}
                     detail={`${data.accounts.length} total COA rows`}
                     tone="emerald"
                 />
                 <MetricCard
                     icon="mdi:tray-arrow-down"
                     label="Work queue"
-                    value={loading ? '...' : String(openEntries.length)}
+                    loading={loading}
+                    value={String(openEntries.length)}
                     detail="Journal entries to finish"
                     tone={openEntries.length > 0 ? 'amber' : 'emerald'}
                 />
@@ -214,7 +227,9 @@ const Overview = () => {
                     </CardHeader>
                     <CardContent className="border-t border-ld p-0">
                         {loading ? (
-                            <EmptyState label="Loading journal entries..." />
+                            <div className="flex items-center justify-center px-4 py-8">
+                                <LoadingSpinner size="md" className="text-primary" />
+                            </div>
                         ) : recentEntries.length > 0 ? (
                             <div className="divide-y divide-ld">
                                 {recentEntries.map((entry) => (
@@ -314,6 +329,7 @@ const MetricCard = ({
     tone,
     urgent = false,
     to,
+    loading = false,
 }: {
     icon: string;
     label: string;
@@ -322,6 +338,7 @@ const MetricCard = ({
     tone: StatusTone;
     urgent?: boolean;
     to?: string;
+    loading?: boolean;
 }) => {
     const card = (
         <Card className={`h-full shadow-none transition-colors ${urgent ? 'border-red-300 ring-1 ring-red-200 dark:border-red-900/60 dark:ring-red-900/40' : 'border-secondary/20'} ${to ? 'hover:border-primary/40 hover:bg-muted/30' : ''}`}>
@@ -330,7 +347,11 @@ const MetricCard = ({
                     <div className="min-w-0">
                         <div className="text-xs font-medium uppercase text-muted-foreground">{label}</div>
                         <div className="mt-2 font-mono text-2xl font-semibold tabular-nums text-[#172033] dark:text-white">
-                            {value}
+                            {loading ? (
+                                <LoadingSpinner variant="dots" size="lg" className={`text-2xl ${toneTextClass[tone]}`} />
+                            ) : (
+                                value
+                            )}
                         </div>
                         <div className={`mt-1 flex items-center gap-1 text-xs ${urgent ? 'font-semibold text-red-700 dark:text-red-300' : 'text-muted-foreground'}`}>
                             {detail}

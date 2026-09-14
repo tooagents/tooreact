@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Icon } from '@iconify/react/dist/iconify.js';
 import BreadcrumbComp from 'src/_layouts/shared/breadcrumb/BreadcrumbComp';
+import LoadingSpinner from 'src/components/shared/LoadingSpinner';
 import { Badge } from 'src/components/ui/badge';
 import { Button } from 'src/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from 'src/components/ui/card';
@@ -1006,7 +1007,7 @@ const Invoice = () => {
                                 </div>
 
                                 {itemsLoading ? (
-                                    <p className="px-1 py-2 text-xs text-muted-foreground">Loading items…</p>
+                                    <p className="px-1 py-2 text-xs"><LoadingSpinner size="sm" className="text-primary" /></p>
                                 ) : items.length === 0 ? (
                                     <p className="px-1 py-2 text-xs text-muted-foreground">No items yet. Add a line above.</p>
                                 ) : (
@@ -1480,8 +1481,8 @@ const Invoice = () => {
                                         })}
                                         {loading ? (
                                             <TRow>
-                                                <TCell colSpan={5} className="px-3 py-4 text-sm text-[#596986]">
-                                                    Loading…
+                                                <TCell colSpan={5} className="px-3 py-4 text-sm">
+                                                    <LoadingSpinner size="sm" className="text-primary" />
                                                 </TCell>
                                             </TRow>
                                         ) : null}
@@ -1596,7 +1597,7 @@ const Invoice = () => {
                                                 </div>
                                                 {(detail?.inv_payments ?? []).length === 0 ? (
                                                     <p className="px-4 text-xs text-[#64748b]">
-                                                        {detailLoading ? 'Loading payments…' : 'No payments recorded yet.'}
+                                                        {detailLoading ? <LoadingSpinner size="sm" className="text-primary" /> : 'No payments recorded yet.'}
                                                     </p>
                                                 ) : (
                                                     <div className="flex flex-col gap-1.5">
@@ -1711,8 +1712,8 @@ const Invoice = () => {
                                                     <TBody>
                                                         {detailLoading && lineItems.length === 0 ? (
                                                             <TRow>
-                                                                <TCell colSpan={4} className="px-4 py-4 text-sm text-[#64748b]">
-                                                                    Loading items…
+                                                                <TCell colSpan={4} className="px-4 py-4 text-sm">
+                                                                    <LoadingSpinner size="sm" className="text-primary" />
                                                                 </TCell>
                                                             </TRow>
                                                         ) : lineItems.length === 0 ? (
