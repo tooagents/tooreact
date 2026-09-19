@@ -186,7 +186,7 @@ const denormalizeClient = (c: ClientDB): InvoiceUpdate => ({
     client_payment_method: c.client_payment_method ?? null,
     client_note: c.client_note ?? null,
     client_currency: c.client_currency ?? null,
-    inv_tnc: c.client_terms_conditions ?? null,
+    inv_tnc: c.client_inv_term ?? null,
 });
 
 const BCrumb = [{ to: '/', title: 'Home' }, { title: 'Invoice' }];
@@ -209,7 +209,10 @@ const Invoice = () => {
     const [isCreating, setIsCreating] = useState(false);
     const [editDraft, setEditDraft] = useState<InvoiceDraft | null>(null);
     const [isSavingEdit, setIsSavingEdit] = useState(false);
-    const [savingTncDefault, setSavingTncDefault] = useState(false);
+    // Terms & conditions: the value when the dialog opened (to detect edits) and
+    // whether to also push the edited terms back to the client's default.
+    const [initialTnc, setInitialTnc] = useState('');
+    const [updateClientTerms, setUpdateClientTerms] = useState(false);
     const [toDelete, setToDelete] = useState<InvoiceType | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
     const [cloningId, setCloningId] = useState<string | null>(null);
@@ -378,11 +381,13 @@ const Invoice = () => {
             inv_currency: 'USD',
             inv_reference: '',
             inv_notes: '',
-            // Leave blank so the footer falls back to the business default
-            // (be_inv_tnc) then DEFAULT_INV_TNC; the placeholder shows what will
-            // print. Typing here overrides it for this invoice only.
+            // Leave blank so the footer falls back to the client default, then the
+            // business default (be_inv_tnc), then DEFAULT_INV_TNC; the placeholder
+            // shows what will print. Typing here overrides it for this invoice.
             inv_tnc: '',
         });
+        setInitialTnc('');
+        setUpdateClientTerms(false);
         setError(null);
         setMsg(null);
     };
@@ -465,6 +470,8 @@ const Invoice = () => {
             inv_notes: inv.inv_notes ?? '',
             inv_tnc: inv.inv_tnc ?? '',
         });
+        setInitialTnc(inv.inv_tnc ?? '');
+        setUpdateClientTerms(false);
         // Restore the totals block from the stored invoice. Discount is stored as
         // an amount, so it comes back as a flat value.
         setDiscount({ value: inv.inv_discount != null && num(inv.inv_discount) ? String(inv.inv_discount) : '', type: 'flat' });
@@ -507,6 +514,8 @@ const Invoice = () => {
         setDiscount({ value: '', type: 'flat' });
         setTax(null);
         setFee(null);
+        setInitialTnc('');
+        setUpdateClientTerms(false);
     };
 
     const updateEditDraft = (field: keyof InvoiceDraft, value: string) => {
@@ -640,38 +649,40 @@ const Invoice = () => {
                     inv_template_id: 't1',
                     ...(pickedClient ? denormalizeClient(pickedClient) : {}),
                     ...base,
-                    inv_tnc: invTncTyped || (pickedClient?.client_terms_conditions ?? null),
+                    inv_tnc: invTncTyped || (pickedClient?.client_inv_term ?? null),
                 };
             await oInvAPI.saveInvoice(payload);
             const created = !editing;
+
+            // "Update the whole client": also save the edited terms as this
+            // client's default (client_inv_term) so future invoices inherit them.
+            const clientId = pickedClient ? (getClientId(pickedClient) || '') : (editing?.client_id ?? '');
+            let clientUpdated = false;
+            if (updateClientTerms && clientId) {
+                try {
+                    await clientsAPI.updateClient(clientId, { client_inv_term: invTncTyped || null });
+                    clientUpdated = true;
+                } catch {
+                    // Non-fatal: the invoice saved; surface a soft note below.
+                }
+            }
+
             setEditing(null);
             setIsCreating(false);
             setEditDraft(null);
-            setMsg(created ? 'Invoice created.' : 'Invoice saved.');
+            setMsg(
+                (created ? 'Invoice created.' : 'Invoice saved.')
+                + (updateClientTerms
+                    ? clientUpdated
+                        ? " Client's default terms updated."
+                        : " (Couldn't update the client's default terms.)"
+                    : ''),
+            );
             await refresh();
         } catch (e: any) {
             setError(e?.message || 'Failed to save invoice.');
         } finally {
             setIsSavingEdit(false);
-        }
-    };
-
-    // Persist the current invoice's terms & conditions as the business-wide
-    // default (be_inv_tnc), so future invoices with no T&C fall back to it.
-    const saveTncAsBizDefault = async () => {
-        const value = editDraft?.inv_tnc.trim();
-        if (!value || savingTncDefault) return;
-        setSavingTncDefault(true);
-        setError(null);
-        setMsg(null);
-        try {
-            const updated = await meOrgAPI.patchOrg({ be_inv_tnc: value });
-            setBiz(updated ?? { ...biz, be_inv_tnc: value });
-            setMsg('Saved as your business default terms.');
-        } catch (e: any) {
-            setError(e?.message || 'Failed to save business default terms.');
-        } finally {
-            setSavingTncDefault(false);
         }
     };
 
@@ -1308,17 +1319,7 @@ const Invoice = () => {
 
                             {/* -------- Terms & Conditions (invoice footer) -------- */}
                             <div className="flex flex-col gap-1.5">
-                                <div className="flex items-center justify-between">
-                                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Terms &amp; Conditions</span>
-                                    <button
-                                        type="button"
-                                        className="text-[11px] font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50"
-                                        disabled={isSavingEdit || savingTncDefault || !editDraft.inv_tnc.trim()}
-                                        onClick={saveTncAsBizDefault}
-                                    >
-                                        {savingTncDefault ? 'Saving…' : 'Save as business default'}
-                                    </button>
-                                </div>
+                                <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Terms &amp; Conditions</span>
                                 <Textarea
                                     value={editDraft.inv_tnc}
                                     onChange={(e) => updateEditDraft('inv_tnc', e.target.value)}
@@ -1326,9 +1327,31 @@ const Invoice = () => {
                                     rows={4}
                                     disabled={isSavingEdit}
                                 />
-                                <span className="text-[10px] text-muted-foreground">
-                                    Shown in the invoice footer. Leave blank to use your business default terms.
-                                </span>
+                                {/* Terms changed + a saved client exists -> offer to update
+                                    just this invoice, or the client's default too (like the
+                                    "Mark as settled" choice below the totals). */}
+                                {editDraft.inv_tnc.trim() !== initialTnc.trim()
+                                    && (pickedClient ? getClientId(pickedClient) : editing?.client_id) ? (
+                                    <label className="flex items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs">
+                                        <span className="flex flex-col">
+                                            <span className="font-medium">Also update this client's default terms</span>
+                                            <span className="text-[10px] font-normal text-muted-foreground">
+                                                Off: applies to this invoice only. On: saved as the client's default for future invoices too.
+                                            </span>
+                                        </span>
+                                        <input
+                                            type="checkbox"
+                                            className="h-4 w-4 shrink-0"
+                                            disabled={isSavingEdit}
+                                            checked={updateClientTerms}
+                                            onChange={(e) => setUpdateClientTerms(e.target.checked)}
+                                        />
+                                    </label>
+                                ) : (
+                                    <span className="text-[10px] text-muted-foreground">
+                                        Shown in the invoice footer. Leave blank to use the client's default terms.
+                                    </span>
+                                )}
                             </div>
                         </div>
                     ) : null}

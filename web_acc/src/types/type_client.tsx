@@ -24,6 +24,7 @@ export interface ClientDB {
     client_payment_method?: Nullable<string>;
     client_template_id?: Nullable<string>;
     client_terms_conditions?: Nullable<string>;
+    client_inv_term?: Nullable<string>;
     client_note?: Nullable<string>;
     client_status?: Nullable<string>;
 
