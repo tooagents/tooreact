@@ -21,6 +21,7 @@ export interface InterfaceBE {
     be_inv_template_id?: Nullable<string>;
     be_description?: Nullable<string>;
     be_note?: Nullable<string>;
+    be_inv_tnc?: Nullable<string>;
     be_timezone?: Nullable<string>;
     be_date_format?: Nullable<string>;
     be_inv_prefix?: Nullable<string>;

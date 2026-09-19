@@ -123,7 +123,7 @@ const bodyContent = `  <div class="invoice-wrapper">
     </section>
 
     <footer class="footer">
-      ${oInv.inv_tnc || "Thank you for your business!"}
+      ${oInv.inv_tnc}
     </footer>
   </div>
   `;

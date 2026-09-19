@@ -112,7 +112,7 @@ ${oInv.inv_paid_total != null && oInv.inv_paid_total !== 0
         }
 
     <footer class="invoice-footer">
-      ${oInv.inv_tnc || "Thank you for your business!"}
+      ${oInv.inv_tnc}
     </footer>
   </div>
   `;

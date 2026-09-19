@@ -16,6 +16,7 @@ import { ClientDB, getClientDisplayName, getClientId } from 'src/types/type_clie
 import InvoiceHtmlPreview from 'src/accounting/invoice/InvoiceHtmlPreview';
 import { downloadInvoicePdf, emailInvoice } from 'src/accounting/invoice/invoicePdf';
 import { TEMPLATE_IDS } from 'src/accounting/invoice/templates';
+import { DEFAULT_INV_TNC } from 'src/accounting/invoice/invoiceDefaults';
 import { meOrgAPI } from 'src/settings/me/me-org-api';
 import type { InterfaceBE } from 'src/types/type_be';
 
@@ -58,6 +59,7 @@ type InvoiceDraft = {
     inv_currency: string;
     inv_reference: string;
     inv_notes: string;
+    inv_tnc: string;
 };
 
 // One line-item row. The item itself is PICKED from the catalog (fills name,
@@ -207,6 +209,7 @@ const Invoice = () => {
     const [isCreating, setIsCreating] = useState(false);
     const [editDraft, setEditDraft] = useState<InvoiceDraft | null>(null);
     const [isSavingEdit, setIsSavingEdit] = useState(false);
+    const [savingTncDefault, setSavingTncDefault] = useState(false);
     const [toDelete, setToDelete] = useState<InvoiceType | null>(null);
     const [isDeleting, setIsDeleting] = useState(false);
     const [cloningId, setCloningId] = useState<string | null>(null);
@@ -375,6 +378,10 @@ const Invoice = () => {
             inv_currency: 'USD',
             inv_reference: '',
             inv_notes: '',
+            // Leave blank so the footer falls back to the business default
+            // (be_inv_tnc) then DEFAULT_INV_TNC; the placeholder shows what will
+            // print. Typing here overrides it for this invoice only.
+            inv_tnc: '',
         });
         setError(null);
         setMsg(null);
@@ -456,6 +463,7 @@ const Invoice = () => {
             inv_currency: inv.inv_currency ?? '',
             inv_reference: inv.inv_reference ?? '',
             inv_notes: inv.inv_notes ?? '',
+            inv_tnc: inv.inv_tnc ?? '',
         });
         // Restore the totals block from the stored invoice. Discount is stored as
         // an amount, so it comes back as a flat value.
@@ -618,15 +626,21 @@ const Invoice = () => {
                 inv_items,
             };
 
+            // Terms & conditions cascade: what the user typed wins; blank defers to
+            // the client's T&C on create (from denormalizeClient), else null so the
+            // footer falls back to the business default (be_inv_tnc) / app default.
+            const invTncTyped = editDraft.inv_tnc.trim();
+
             // On create: seed the full client_* denormalization (if a client was
             // picked) and a default template, then let the visible fields override.
             // No inv_id -> backend creates and auto-assigns the next number.
             const payload: InvoiceUpdate = editing
-                ? base
+                ? { ...base, inv_tnc: invTncTyped || null }
                 : {
                     inv_template_id: 't1',
                     ...(pickedClient ? denormalizeClient(pickedClient) : {}),
                     ...base,
+                    inv_tnc: invTncTyped || (pickedClient?.client_terms_conditions ?? null),
                 };
             await oInvAPI.saveInvoice(payload);
             const created = !editing;
@@ -639,6 +653,25 @@ const Invoice = () => {
             setError(e?.message || 'Failed to save invoice.');
         } finally {
             setIsSavingEdit(false);
+        }
+    };
+
+    // Persist the current invoice's terms & conditions as the business-wide
+    // default (be_inv_tnc), so future invoices with no T&C fall back to it.
+    const saveTncAsBizDefault = async () => {
+        const value = editDraft?.inv_tnc.trim();
+        if (!value || savingTncDefault) return;
+        setSavingTncDefault(true);
+        setError(null);
+        setMsg(null);
+        try {
+            const updated = await meOrgAPI.patchOrg({ be_inv_tnc: value });
+            setBiz(updated ?? { ...biz, be_inv_tnc: value });
+            setMsg('Saved as your business default terms.');
+        } catch (e: any) {
+            setError(e?.message || 'Failed to save business default terms.');
+        } finally {
+            setSavingTncDefault(false);
         }
     };
 
@@ -1271,6 +1304,31 @@ const Invoice = () => {
                                         </label>
                                     ) : null}
                                 </div>
+                            </div>
+
+                            {/* -------- Terms & Conditions (invoice footer) -------- */}
+                            <div className="flex flex-col gap-1.5">
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Terms &amp; Conditions</span>
+                                    <button
+                                        type="button"
+                                        className="text-[11px] font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                                        disabled={isSavingEdit || savingTncDefault || !editDraft.inv_tnc.trim()}
+                                        onClick={saveTncAsBizDefault}
+                                    >
+                                        {savingTncDefault ? 'Saving…' : 'Save as business default'}
+                                    </button>
+                                </div>
+                                <Textarea
+                                    value={editDraft.inv_tnc}
+                                    onChange={(e) => updateEditDraft('inv_tnc', e.target.value)}
+                                    placeholder={biz.be_inv_tnc || DEFAULT_INV_TNC}
+                                    rows={4}
+                                    disabled={isSavingEdit}
+                                />
+                                <span className="text-[10px] text-muted-foreground">
+                                    Shown in the invoice footer. Leave blank to use your business default terms.
+                                </span>
                             </div>
                         </div>
                     ) : null}

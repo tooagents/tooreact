@@ -5,6 +5,7 @@
 
 import type { Invoice } from 'src/accounting/invoice/o_inv-api';
 import type { InterfaceBE } from 'src/types/type_be';
+import { DEFAULT_INV_TNC } from 'src/accounting/invoice/invoiceDefaults';
 import type { BE_DB, InvDB, ItemDB } from './dto';
 
 const toNum = (v: unknown): number | undefined =>
@@ -21,9 +22,18 @@ export function toTemplateInput(
         item_amount: toNum(it.item_amount),
     })) as ItemDB[];
 
+    // Resolve the effective terms & conditions once, here, so every render path
+    // (print / canvas / preview) and every template shows the same footer:
+    // per-invoice inv_tnc -> business default be_inv_tnc -> app default.
+    const inv_tnc =
+        (inv.inv_tnc && inv.inv_tnc.trim()) ||
+        (be.be_inv_tnc && String(be.be_inv_tnc).trim()) ||
+        DEFAULT_INV_TNC;
+
     const oInv = {
         ...inv,
         inv_items,
+        inv_tnc,
     } as unknown as InvDB;
 
     const oBiz = { ...be } as unknown as BE_DB;

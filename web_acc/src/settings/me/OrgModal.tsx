@@ -1,6 +1,7 @@
 import React from "react";
 import { Label } from "src/components/ui/label";
 import { Input } from "src/components/ui/input";
+import { Textarea } from "src/components/ui/textarea";
 import { dateOnly, type InterfaceBE } from "src/types/type_be";
 
 type OrgModalProps = {
@@ -179,6 +180,17 @@ const OrgModal = ({ tempOrganization, setTempOrganization }: OrgModalProps) => (
                     ...tempOrganization,
                     employee_count: e.target.value === "" ? undefined : Number(e.target.value),
                 })}
+            />
+        </div>
+        <div className="flex items-start gap-3 lg:col-span-2">
+            <Label htmlFor="orgInvTnc" className={LABEL}>Default Invoice Terms</Label>
+            <Textarea
+                id="orgInvTnc"
+                className="flex-1"
+                rows={4}
+                placeholder="Default terms & payment conditions shown in the invoice footer"
+                value={text(tempOrganization.be_inv_tnc)}
+                onChange={(e) => setTempOrganization({ ...tempOrganization, be_inv_tnc: e.target.value })}
             />
         </div>
     </div>

@@ -1,6 +1,7 @@
 import type { Invoice } from 'src/accounting/invoice/o_inv-api';
 import type { InterfaceBE } from 'src/types/type_be';
 import { genInvoiceHTML } from 'src/accounting/invoice/templates';
+import { DEFAULT_INV_TNC } from 'src/accounting/invoice/invoiceDefaults';
 import { formatDate } from 'src/core/format';
 import { apiFetch } from 'src/core/apihttp';
 
@@ -212,13 +213,18 @@ export function buildInvoiceEmailFields(inv: Partial<Invoice>, biz: Partial<Inte
     const due = inv.inv_due_date ? formatDate(String(inv.inv_due_date)) : '';
     const contact = String((inv as { client_contact_name?: string }).client_contact_name ?? '').trim();
     const subject = `Invoice ${number}${biz.be_name ? ` from ${biz.be_name}` : ''}`;
+    // Terms & payment conditions, same fallback chain as the PDF footer:
+    // invoice T&C -> business default -> app default.
+    const terms = (inv.inv_tnc && inv.inv_tnc.trim())
+        || (biz.be_inv_tnc && String(biz.be_inv_tnc).trim())
+        || DEFAULT_INV_TNC;
     const body = [
         contact ? `Dear ${contact},` : 'Dear Client,',
         '',
         `Please find attached invoice ${number}${due ? `, due on ${due}` : ''}.`,
         'If you have any questions, feel free to reach out.',
         '',
-        'Thank you for your business.',
+        terms,
         '',
         biz.be_contact || '',
         biz.be_name || '',

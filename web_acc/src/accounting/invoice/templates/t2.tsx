@@ -154,7 +154,7 @@ ${oInv.inv_paid_total ? `
         </div>
       </div>
         <div class="footer">
-            ${(oInv.inv_tnc || 'Thank you for your business!').replace(/\n/g, "<br>")}
+            ${(oInv.inv_tnc || '').replace(/\n/g, "<br>")}
         </div>
     </div>
   `;

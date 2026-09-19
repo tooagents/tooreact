@@ -72,7 +72,7 @@ const bodyContent = `    <div class="wrapper">
         }
 
       <footer>
-        ${oInv.inv_tnc || "Thank you for your business!"}
+        ${oInv.inv_tnc}
       </footer>
     </div>
   `;
